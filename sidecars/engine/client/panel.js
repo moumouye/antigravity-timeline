@@ -52,23 +52,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return getTexts(currentPrefs.language);
   }
 
-  /**
-   * Save preferences and sync via CDP RPC
-   * @param {Partial<TimelinePreferences>} newPrefs
-   */
-  function savePrefs(newPrefs) {
-    currentPrefs = Object.assign({}, currentPrefs, newPrefs);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentPrefs));
-    } catch {}
-    if (typeof window.__agyTimelineSavePrefs === 'function') {
-      try {
-        window.__agyTimelineSavePrefs(JSON.stringify(currentPrefs));
-      } catch {}
-    }
-    renderUI();
-  }
-
   // 2. Inject Stylesheet
   const styleEl = document.createElement('style');
   styleEl.id = 'agy-timeline-styles';
@@ -79,9 +62,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let currentNodes = [];
   /** @type {number | null} */
   let hoverTimer = null;
-  let isDrawerOpen = false;
+  let isLoadingOlder = false;
 
-  // 3. Find Viewport and All Interactive Turns
+  // 3. Find Viewport
   function getViewport() {
     return /** @type {HTMLElement | null} */ (
       document.querySelector('[data-testid="autoscroll-viewport"]') ||
@@ -90,15 +73,55 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
+  // 4. Auto-Expand Folded / Collapsed Older Messages in Antigravity
+  function autoExpandCollapsedMessages() {
+    if (isLoadingOlder) return;
+
+    const viewport = getViewport();
+    if (!viewport) return;
+
+    // Find the hidden/sr-only "Load older messages" button
+    const loadBtn = Array.from(document.querySelectorAll('button')).find(b => {
+      const text = (b.textContent || '').trim().toLowerCase();
+      return text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史');
+    });
+
+    if (loadBtn && !loadBtn.disabled) {
+      isLoadingOlder = true;
+      const prevScrollTop = viewport.scrollTop;
+      const prevScrollHeight = viewport.scrollHeight;
+
+      loadBtn.click();
+
+      // Maintain scroll position to avoid jump, then scan next batch
+      setTimeout(() => {
+        const heightDiff = viewport.scrollHeight - prevScrollHeight;
+        if (heightDiff > 0 && prevScrollTop > 50) {
+          viewport.scrollTop = prevScrollTop + heightDiff;
+        }
+        isLoadingOlder = false;
+        renderUI();
+
+        // Recursively expand if more older messages exist
+        const hasMore = Array.from(document.querySelectorAll('button')).some(b =>
+          (b.textContent || '').toLowerCase().includes('load older messages')
+        );
+        if (hasMore) {
+          autoExpandCollapsedMessages();
+        }
+      }, 350);
+    }
+  }
+
+  // 5. Scan All Conversation Turns Accurately
   /**
-   * Scan all conversation turns accurately (Scans all user-input steps across entire conversation)
    * @returns {TimelineTurnNode[]}
    */
   function scanTurns() {
     const viewport = getViewport();
     if (!viewport) return [];
 
-    // All user question cards (each card represents one user turn)
+    // Query all user question cards across conversation
     const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
     const scrollHeight = Math.max(viewport.scrollHeight, 1);
 
@@ -125,7 +148,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const turnContainer = turnWrapper.parentElement || card.parentElement;
       let responseText = '';
       if (turnContainer) {
-        // Find markdown paragraph inside agent answer
+        // Find markdown paragraphs in agent answer
         const pList = turnContainer.querySelectorAll('p, .markdown p, [class*="prose"] p');
         for (const p of Array.from(pList)) {
           const t = (p.textContent || '').replace(/\s+/g, ' ').trim();
@@ -158,7 +181,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return nodes;
   }
 
-  // 4. Create or Get Track Container
+  // 6. Create or Get Track Container
   function ensureTrackContainer(viewport) {
     let track = document.getElementById('agy-timeline-track');
     if (!track) {
@@ -171,7 +194,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return track;
   }
 
-  // 5. Create or Get Hover Popover (Strictly matches Image 3)
+  // 7. Create or Get Hover Popover (Strictly matches Image 3)
   function ensurePopover(track) {
     let popover = document.getElementById('agy-timeline-popover');
     if (!popover) {
@@ -221,7 +244,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 120);
   }
 
-  // 6. Jump to Turn with Highlight Animation
+  // 8. Jump to Turn with Smooth Scroll and Pulse Glow
   /**
    * @param {TimelineTurnNode} node
    */
@@ -241,11 +264,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     hidePopover();
   }
 
-  // 7. Render Right-edge Markers (Matches Screenshot ==)
+  // 9. Render Right-edge Markers (Matches Screenshot ==)
   function renderMarkers(track, nodes) {
     track.querySelectorAll('.agy-timeline-marker').forEach(el => el.remove());
-
-    if (!currentPrefs.showRightEdgeMarkers) return;
 
     nodes.forEach(node => {
       const marker = document.createElement('div');
@@ -260,9 +281,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       `;
 
       marker.addEventListener('mouseenter', () => {
-        if (currentPrefs.showHoverPreview) {
-          showPopover(node);
-        }
+        showPopover(node);
       });
 
       marker.addEventListener('mouseleave', () => {
@@ -278,7 +297,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 8. Floating Action Button
+  // 10. Clean Floating Action Pill (Matches Image 2 Right-bottom Pill)
   function ensureFloatingBtn(viewport) {
     let btn = document.getElementById('agy-timeline-floating-btn');
     if (!btn) {
@@ -288,7 +307,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       parent.appendChild(btn);
 
       btn.addEventListener('click', () => {
-        toggleDrawer();
+        // Clicking floating pill scrolls smoothly to newest turn or tops
+        if (currentNodes.length > 0) {
+          const last = currentNodes[currentNodes.length - 1];
+          jumpToTurn(last);
+        }
       });
     }
 
@@ -300,97 +323,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return btn;
   }
 
-  // 9. Drawer Panel
-  function ensureDrawer(viewport) {
-    let drawer = document.getElementById('agy-timeline-drawer');
-    if (!drawer) {
-      drawer = document.createElement('div');
-      drawer.id = 'agy-timeline-drawer';
-      const parent = viewport.parentElement || document.body;
-      parent.appendChild(drawer);
-    }
-    return drawer;
-  }
-
-  function renderDrawer(nodes) {
-    const viewport = getViewport();
-    if (!viewport) return;
-    const drawer = ensureDrawer(viewport);
-    const txt = t();
-
-    drawer.innerHTML = `
-      <div class="agy-drawer-header">
-        <div class="agy-drawer-title-group">
-          <span class="agy-drawer-title">⏱️ ${txt.title}</span>
-          <span class="agy-drawer-subtitle">${txt.turnsCount(nodes.length)}</span>
-        </div>
-        <div class="agy-drawer-actions">
-          <button class="agy-drawer-icon-btn" id="agy-drawer-top-btn" title="${txt.topButton}">⬆️</button>
-          <button class="agy-drawer-icon-btn" id="agy-drawer-bottom-btn" title="${txt.bottomButton}">⬇️</button>
-          <button class="agy-drawer-icon-btn" id="agy-drawer-close-btn" title="${txt.collapseButton}">✖️</button>
-        </div>
-      </div>
-      <div class="agy-drawer-pref-bar">
-        <label class="agy-switch-label" title="${txt.disableAutoScrollDesc}">
-          <input type="checkbox" class="agy-switch-input" id="agy-pref-autoscroll" ${currentPrefs.disableAutoScrollOnSend ? 'checked' : ''} />
-          <span>${txt.disableAutoScrollLabel}</span>
-        </label>
-      </div>
-      <div class="agy-drawer-list" id="agy-drawer-list"></div>
-    `;
-
-    const listEl = drawer.querySelector('#agy-drawer-list');
-    if (listEl) {
-      if (nodes.length === 0) {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:16px;text-align:center;">${txt.noTurnsFound}</div>`;
-      } else {
-        nodes.forEach(node => {
-          const item = document.createElement('div');
-          item.className = `agy-drawer-node-item ${node.isActive ? 'is-active' : ''}`;
-          item.innerHTML = `
-            <div class="agy-node-badge">#${node.index}</div>
-            <div class="agy-node-content">
-              <div class="agy-node-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
-              <div class="agy-node-meta">
-                <span>⏱️ ${escapeHtml(node.timeStr || txt.turnLabel(node.index))}</span>
-              </div>
-            </div>
-          `;
-
-          item.addEventListener('click', () => {
-            jumpToTurn(node);
-          });
-
-          listEl.appendChild(item);
-        });
-      }
-    }
-
-    drawer.querySelector('#agy-drawer-top-btn')?.addEventListener('click', () => {
-      viewport.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-    drawer.querySelector('#agy-drawer-bottom-btn')?.addEventListener('click', () => {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
-    });
-    drawer.querySelector('#agy-drawer-close-btn')?.addEventListener('click', () => {
-      toggleDrawer(false);
-    });
-
-    const prefCheckbox = /** @type {HTMLInputElement | null} */ (drawer.querySelector('#agy-pref-autoscroll'));
-    prefCheckbox?.addEventListener('change', () => {
-      savePrefs({ disableAutoScrollOnSend: prefCheckbox.checked });
-    });
-  }
-
-  function toggleDrawer(force) {
-    isDrawerOpen = typeof force === 'boolean' ? force : !isDrawerOpen;
-    const drawer = document.getElementById('agy-timeline-drawer');
-    if (drawer) {
-      drawer.classList.toggle('is-open', isDrawerOpen);
-    }
-  }
-
-  // 10. Smart Scroll Lock
+  // 11. Smart Scroll Lock (Disable auto-scroll to bottom on send)
   let lastUserScrollTop = 0;
   let isLockedByPreference = false;
 
@@ -447,154 +380,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, true);
   }
 
-  // 11. Native Antigravity Settings Modal Integration
-  function setupSettingsModalIntegration() {
-    function checkModal() {
-      const dialog = document.querySelector('div[role="dialog"]');
-      if (!dialog) return;
-
-      const sidebarNav = dialog.querySelector('.bg-sidebar, nav, [role="tablist"], .flex.flex-col.gap-1');
-      if (!sidebarNav || dialog.querySelector('#agy-timeline-settings-tab')) return;
-
-      // Create Settings Tab Button
-      const tabBtn = document.createElement('button');
-      tabBtn.id = 'agy-timeline-settings-tab';
-      tabBtn.className = 'inline-flex items-center font-medium transition-colors select-none outline-none cursor-pointer flex-grow w-full justify-start select-none font-normal h-8 min-w-0 gap-1.5 px-2 py-1 rounded-lg bg-transparent text-secondary-foreground hover:bg-sidebar-muted hover:text-foreground text-sm';
-      tabBtn.innerHTML = `
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--agy-timeline-accent);">
-          <circle cx="12" cy="12" r="10"></circle>
-          <polyline points="12 6 12 12 16 14"></polyline>
-        </svg>
-        <span>${t().settingsTabName}</span>
-      `;
-
-      // Find insertion point
-      const lastBtn = sidebarNav.querySelector('button:last-child');
-      if (lastBtn && lastBtn.parentElement) {
-        lastBtn.parentElement.appendChild(tabBtn);
-      } else {
-        sidebarNav.appendChild(tabBtn);
-      }
-
-      // Find Right Content Pane
-      let rightPane = dialog.querySelector('.flex-1.min-w-0.overflow-y-auto, .flex-1.p-6, .overflow-y-auto:not(.bg-sidebar)');
-      if (!rightPane) {
-        const panes = Array.from(dialog.querySelectorAll('div')).filter(d => d.clientHeight > 200 && d !== sidebarNav && !sidebarNav.contains(d));
-        rightPane = panes[panes.length - 1];
-      }
-
-      tabBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Highlight this tab
-        sidebarNav.querySelectorAll('button').forEach(b => {
-          b.classList.remove('bg-secondary', 'text-foreground');
-        });
-        tabBtn.classList.add('bg-secondary', 'text-foreground');
-
-        if (rightPane) {
-          // Hide other native views
-          Array.from(rightPane.children).forEach(c => {
-            if (c.id !== 'agy-timeline-settings-panel') {
-              (/** @type {HTMLElement} */ (c)).style.display = 'none';
-            }
-          });
-
-          // Show timeline settings panel
-          let panel = rightPane.querySelector('#agy-timeline-settings-panel');
-          if (!panel) {
-            panel = renderSettingsPanel();
-            rightPane.appendChild(panel);
-          }
-          (/** @type {HTMLElement} */ (panel)).style.display = 'block';
-        }
-      });
-
-      // Reset when other native tabs are clicked
-      dialog.addEventListener('click', (e) => {
-        const target = /** @type {HTMLElement} */ (e.target);
-        const clickedBtn = target?.closest('button');
-        if (clickedBtn && clickedBtn !== tabBtn && sidebarNav.contains(clickedBtn)) {
-          tabBtn.classList.remove('bg-secondary', 'text-foreground');
-          const panel = rightPane?.querySelector('#agy-timeline-settings-panel');
-          if (panel) {
-            (/** @type {HTMLElement} */ (panel)).style.display = 'none';
-          }
-        }
-      });
-    }
-
-    function renderSettingsPanel() {
-      const panel = document.createElement('div');
-      panel.id = 'agy-timeline-settings-panel';
-      panel.className = 'h-full w-full overflow-y-auto px-8 py-6 select-none';
-
-      const txt = t();
-      panel.innerHTML = `
-        <div style="margin-bottom:20px;">
-          <h2 style="font-size:18px;font-weight:600;color:var(--foreground);">${txt.settingsTitle}</h2>
-          <p style="font-size:12.5px;color:var(--muted-foreground);margin-top:4px;">${txt.settingsSubtitle}</p>
-        </div>
-
-        <div class="agy-settings-card">
-          <div class="agy-settings-row">
-            <div class="agy-settings-label-group">
-              <span class="agy-settings-item-title">${txt.disableAutoScrollLabel}</span>
-              <span class="agy-settings-item-desc">${txt.disableAutoScrollDesc}</span>
-            </div>
-            <label class="agy-toggle-switch">
-              <input type="checkbox" id="agy-set-autoscroll" ${currentPrefs.disableAutoScrollOnSend ? 'checked' : ''} />
-              <span class="agy-toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="agy-settings-row" style="border-top:1px solid var(--border);padding-top:12px;">
-            <div class="agy-settings-label-group">
-              <span class="agy-settings-item-title">${txt.showMarkersLabel}</span>
-              <span class="agy-settings-item-desc">${txt.showMarkersDesc}</span>
-            </div>
-            <label class="agy-toggle-switch">
-              <input type="checkbox" id="agy-set-markers" ${currentPrefs.showRightEdgeMarkers ? 'checked' : ''} />
-              <span class="agy-toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="agy-settings-row" style="border-top:1px solid var(--border);padding-top:12px;">
-            <div class="agy-settings-label-group">
-              <span class="agy-settings-item-title">${txt.showPreviewLabel}</span>
-              <span class="agy-settings-item-desc">${txt.showPreviewDesc}</span>
-            </div>
-            <label class="agy-toggle-switch">
-              <input type="checkbox" id="agy-set-preview" ${currentPrefs.showHoverPreview ? 'checked' : ''} />
-              <span class="agy-toggle-slider"></span>
-            </label>
-          </div>
-        </div>
-      `;
-
-      // Event listeners for settings
-      panel.querySelector('#agy-set-autoscroll')?.addEventListener('change', (e) => {
-        savePrefs({ disableAutoScrollOnSend: (/** @type {HTMLInputElement} */ (e.target)).checked });
-      });
-      panel.querySelector('#agy-set-markers')?.addEventListener('change', (e) => {
-        savePrefs({ showRightEdgeMarkers: (/** @type {HTMLInputElement} */ (e.target)).checked });
-      });
-      panel.querySelector('#agy-set-preview')?.addEventListener('change', (e) => {
-        savePrefs({ showHoverPreview: (/** @type {HTMLInputElement} */ (e.target)).checked });
-      });
-
-      return panel;
-    }
-
-    const observer = new MutationObserver(() => {
-      checkModal();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    checkModal();
-    return observer;
-  }
-
   // 12. Main Update Loop
   function renderUI() {
     const viewport = getViewport();
@@ -605,14 +390,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const track = ensureTrackContainer(viewport);
     renderMarkers(track, currentNodes);
     ensureFloatingBtn(viewport);
-    renderDrawer(currentNodes);
   }
 
-  // 13. MutationObserver for dynamic turns
+  // 13. MutationObserver for dynamic turns & auto-expand
   let updateDebounceTimer = null;
   const domObserver = new MutationObserver(() => {
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
     updateDebounceTimer = setTimeout(() => {
+      autoExpandCollapsedMessages();
       renderUI();
     }, 250);
   });
@@ -622,13 +407,12 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   if (initialViewport) {
     setupScrollController(initialViewport);
   }
-  const modalObs = setupSettingsModalIntegration();
+  autoExpandCollapsedMessages();
   renderUI();
 
   // 14. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     domObserver.disconnect();
-    try { modalObs.disconnect(); } catch {}
     staleSelectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => el.remove());
     });
