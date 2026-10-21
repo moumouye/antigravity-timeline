@@ -1,0 +1,394 @@
+/* Antigravity Timeline Navigation Engine Stylesheet */
+
+:root {
+  --agy-timeline-accent: #10b981;
+  --agy-timeline-accent-glow: rgba(16, 185, 129, 0.28);
+  --agy-timeline-accent-light: rgba(16, 185, 129, 0.12);
+  --agy-timeline-bg: var(--card, #ffffff);
+  --agy-timeline-fg: var(--foreground, #18181b);
+  --agy-timeline-muted: var(--muted-foreground, #71717a);
+  --agy-timeline-border: var(--border, rgba(0, 0, 0, 0.08));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --agy-timeline-bg: var(--card, #18181b);
+    --agy-timeline-border: var(--border, rgba(255, 255, 255, 0.1));
+  }
+}
+
+/* 1. Right-edge Timeline Track Container */
+#agy-timeline-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 100%;
+  pointer-events: none;
+  z-index: 40;
+  overflow: visible;
+  user-select: none;
+}
+
+/* 2. Interactive Markers on the Right Edge (Matches Screenshot == Double Line) */
+.agy-timeline-marker {
+  position: absolute;
+  right: 2px;
+  width: 14px;
+  height: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2.5px;
+  padding: 1px 0;
+  border-radius: 3px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(-50%);
+}
+
+.agy-timeline-marker:hover {
+  transform: translateY(-50%) scale(1.15);
+}
+
+.agy-timeline-marker-bar {
+  width: 10px;
+  height: 2px;
+  border-radius: 9999px;
+  background-color: var(--agy-timeline-accent);
+  opacity: 0.75;
+  box-shadow: 0 0 4px var(--agy-timeline-accent-glow);
+  transition: all 0.2s ease;
+}
+
+.agy-timeline-marker.is-active .agy-timeline-marker-bar,
+.agy-timeline-marker:hover .agy-timeline-marker-bar {
+  opacity: 1;
+  background-color: #34d399;
+  box-shadow: 0 0 8px var(--agy-timeline-accent);
+}
+
+.agy-timeline-marker.is-active {
+  filter: drop-shadow(0 0 6px var(--agy-timeline-accent));
+}
+
+/* 3. Hover Preview Popover Card (Matches Image 1) */
+#agy-timeline-popover {
+  position: absolute;
+  right: 22px;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background-color: var(--agy-timeline-bg);
+  color: var(--agy-timeline-fg);
+  border: 1px solid var(--agy-timeline-border);
+  box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.18), 0 4px 10px -2px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(16px);
+  z-index: 50;
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-50%) translateX(6px);
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s;
+  cursor: pointer;
+}
+
+#agy-timeline-popover.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* Popover Content Structure */
+.agy-popover-prompt {
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--agy-timeline-fg);
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agy-popover-response {
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background-color: var(--agy-timeline-accent-light);
+  color: var(--agy-timeline-fg);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agy-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--agy-timeline-border);
+  font-size: 11px;
+  color: var(--agy-timeline-muted);
+}
+
+.agy-popover-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agy-popover-fork-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background-color: transparent;
+  color: var(--agy-timeline-accent);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.agy-popover-fork-btn:hover {
+  background-color: var(--agy-timeline-accent-light);
+  border-color: var(--agy-timeline-accent);
+}
+
+/* 4. Global Action Pill on Floating Edge (Toggle Drawer & Quick Actions) */
+#agy-timeline-floating-btn {
+  position: absolute;
+  right: 18px;
+  bottom: 84px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  background-color: var(--agy-timeline-bg);
+  color: var(--agy-timeline-fg);
+  border: 1px solid var(--agy-timeline-border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+#agy-timeline-floating-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  border-color: var(--agy-timeline-accent);
+}
+
+#agy-timeline-floating-btn .agy-timeline-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--agy-timeline-accent);
+  box-shadow: 0 0 6px var(--agy-timeline-accent);
+}
+
+/* 5. Full Drawer Panel (Collapsible) */
+#agy-timeline-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100%;
+  background-color: var(--agy-timeline-bg);
+  border-left: 1px solid var(--agy-timeline-border);
+  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(20px);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#agy-timeline-drawer.is-open {
+  transform: translateX(0);
+}
+
+.agy-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--agy-timeline-border);
+}
+
+.agy-drawer-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agy-drawer-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--agy-timeline-fg);
+}
+
+.agy-drawer-subtitle {
+  font-size: 11px;
+  color: var(--agy-timeline-muted);
+}
+
+.agy-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agy-drawer-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--agy-timeline-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.agy-drawer-icon-btn:hover {
+  background-color: rgba(125, 125, 125, 0.12);
+  color: var(--agy-timeline-fg);
+}
+
+/* Drawer Preferences / Lock Switch */
+.agy-drawer-pref-bar {
+  padding: 8px 16px;
+  background-color: rgba(125, 125, 125, 0.05);
+  border-bottom: 1px solid var(--agy-timeline-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--agy-timeline-fg);
+}
+
+.agy-switch-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.agy-switch-input {
+  cursor: pointer;
+  accent-color: var(--agy-timeline-accent);
+}
+
+/* Drawer Timeline Nodes List */
+.agy-drawer-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agy-drawer-node-item {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.agy-drawer-node-item:hover {
+  background-color: rgba(125, 125, 125, 0.08);
+  border-color: var(--agy-timeline-border);
+}
+
+.agy-drawer-node-item.is-active {
+  background-color: var(--agy-timeline-accent-light);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.agy-node-badge {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: var(--agy-timeline-accent);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.agy-node-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.agy-node-prompt {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--agy-timeline-fg);
+  line-height: 1.4;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agy-node-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--agy-timeline-muted);
+}
+
+/* 6. Click Target Jump Highlight Pulse Animation */
+@keyframes agy-timeline-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65);
+    background-color: rgba(16, 185, 129, 0.08);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+    background-color: rgba(16, 185, 129, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    background-color: transparent;
+  }
+}
+
+.agy-timeline-target-highlight {
+  animation: agy-timeline-pulse 1.4s ease-out 1 !important;
+  border-radius: 12px;
+}

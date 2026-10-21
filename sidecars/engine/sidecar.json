@@ -1,0 +1,9 @@
+{
+  "command": "node",
+  "args": [
+    "main.mjs"
+  ],
+  "restart_policy": "always",
+  "display_name": "Timeline Navigation Engine",
+  "description": "Right-edge conversation timeline, hover preview popover, fast jumping, smart scroll lock, and jump highlight pulse for Antigravity"
+}
