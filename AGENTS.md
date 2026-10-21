@@ -8,13 +8,13 @@
 
 为保证在无状态会话接力中系统稳定不退化，所有 AI 必须严格遵守以下物理铁律：
 
-1. **动手前必读指针**：任何涉及核心通信、DOM 交互或定位逻辑的改动前，**必须首先查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md)**，严格遵循其中的四维真理库（边界红线、数据流向契约、避坑档案）；
-2. **交付前自动化测试门禁**：在声称任务完成前，**必须本地运行并全绿通过自动化测试**：
+1. **动手前必读指针**：任何涉及核心通信、DOM 交互或定位逻辑的改动前，**必须首先查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md)**，并按需调阅 [`docs/`](docs/) 下的对应真理库（[`docs/boundaries.md`](docs/boundaries.md)、[`docs/contracts.md`](docs/contracts.md)、[`docs/anti-patterns.md`](docs/anti-patterns.md)）；
+2. **交付前自动化测试门禁**：在声称任务完成前，**必须本地运行并全绿通过自动化测试**（参考 [`docs/verification.md`](docs/verification.md)）：
    ```bash
    python3 manage.py test
    ```
    若测试报错（如主视口产生非预期位移、条目数量不符），严禁向用户交付，必须自行排查修复直至测试完全通过；
-3. **单一真理维护原则**：若任务涉及架构重构或核心流程调整，必须在代码提交的同时，**直接“覆盖更新”[`ARCHITECTURE.md`](ARCHITECTURE.md) 的对应章节**，确保架构文档永远仅反映最新代码真理，严禁在架构文档中保留时间线流水账或过时废案。
+3. **单一真理维护原则**：若任务涉及架构重构或核心流程调整，必须在代码提交的同时，**直接“覆盖更新”[`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md) 的对应章节**，确保架构文档永远仅反映最新代码真理，严禁在架构文档中保留时间线流水账或过时废案。
 
 ---
 
