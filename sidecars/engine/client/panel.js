@@ -131,35 +131,13 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       // 1. Extract User Prompt Text
       const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
       const fullText = (quotable.textContent || '').trim();
-      const firstLine = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || `Turn #${idx + 1}`;
-      const cleanPrompt = firstLine.length > 50 ? firstLine.slice(0, 48) + '...' : firstLine;
+      const firstLines = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
+      const cleanPrompt = firstLines.length > 70 ? firstLines.slice(0, 68) + '...' : firstLines;
 
       // 2. Extract Timestamp
       let timeStr = '';
       const match = (card.textContent || '').match(/\b\d{1,2}:\d{2}\b/);
       if (match) timeStr = match[0];
-
-      // 3. Find Associated Agent Answer
-      let turnWrapper = card;
-      while (turnWrapper.parentElement && !turnWrapper.parentElement.className.includes('flex-col gap-0.5') && turnWrapper.parentElement !== document.body) {
-        turnWrapper = turnWrapper.parentElement;
-      }
-      const turnContainer = turnWrapper.parentElement || card.parentElement;
-      let responseText = '';
-      if (turnContainer) {
-        const pList = turnContainer.querySelectorAll('p, .markdown p, [class*="prose"] p');
-        for (const p of Array.from(pList)) {
-          const t = (p.textContent || '').replace(/\s+/g, ' ').trim();
-          if (t && !t.includes(cleanPrompt.slice(0, 15))) {
-            responseText = t;
-            break;
-          }
-        }
-      }
-      if (!responseText) {
-        responseText = '...';
-      }
-      const cleanResponse = responseText.length > 45 ? responseText.slice(0, 42) + '...' : responseText;
 
       const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
       const topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
@@ -167,7 +145,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       nodes.push({
         index: idx + 1,
         userText: cleanPrompt,
-        responseText: cleanResponse,
+        responseText: '',
         timeStr,
         element: /** @type {HTMLElement} */ (card),
         topPercent,
@@ -269,14 +247,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   /**
-   * Render menu list safely without rebuilding DOM if already populated
+   * Render menu list safely (Pure prompt only, no response rows)
    * @param {HTMLElement} menu
    * @param {TimelineTurnNode[]} nodes
    */
   function renderMenuList(menu, nodes) {
     const listEl = menu.querySelector('#agy-menu-list');
 
-    // If already rendered with exact same count, avoid destroying innerHTML to eliminate hover flicker
+    // If already rendered with exact same count, avoid destroying innerHTML
     if (listEl && listEl.children.length === nodes.length && nodes.length > 0) {
       updateActiveCardClasses(menu, nodes);
       return;
@@ -304,7 +282,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
           card.setAttribute('data-turn-idx', String(node.index));
           card.innerHTML = `
             <div class="agy-turn-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
-            <div class="agy-turn-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
           `;
 
           card.addEventListener('click', (e) => {
@@ -320,7 +297,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   /**
-   * Granular class-only update for active states (zero DOM recreation)
+   * Granular class-only update for active states
    * @param {HTMLElement} menu
    * @param {TimelineTurnNode[]} nodes
    */

@@ -65,7 +65,7 @@
   box-shadow: 0 0 8px var(--agy-timeline-accent);
 }
 
-/* 2. Hover Expanded All-Turns Timeline Menu (Seamless bridge with zero gap) */
+/* 2. Hover Expanded All-Turns Timeline Menu */
 #agy-timeline-menu {
   position: fixed;
   right: 18px;
@@ -145,58 +145,44 @@
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   overscroll-behavior: contain;
 }
 
-/* Turn Card Item (No layout-shifting transform on hover to eliminate flicker) */
+/* Turn Card Item: Clean Pure Prompt Only */
 .agy-turn-card {
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid transparent;
-  background-color: transparent;
+  border: 1px solid var(--agy-timeline-border);
+  background-color: rgba(125, 125, 125, 0.02);
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
   box-sizing: border-box;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   user-select: none;
 }
 
 .agy-turn-card:hover {
   background-color: rgba(125, 125, 125, 0.08);
-  border-color: var(--agy-timeline-border);
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .agy-turn-card.is-active {
   background-color: var(--agy-timeline-accent-light);
-  border-color: rgba(16, 185, 129, 0.35);
+  border-color: rgba(16, 185, 129, 0.45);
 }
 
-/* Row 1: Prompt Title */
+/* Pure Prompt Text (2 lines maximum clamp) */
 .agy-turn-prompt {
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
   font-weight: 550;
   color: var(--agy-timeline-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Row 2: Response Capsule */
-.agy-turn-response {
-  font-size: 11.5px;
-  line-height: 1.35;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background-color: var(--agy-timeline-accent-light);
-  color: var(--agy-timeline-fg);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 /* 3. Click Target Jump Highlight Pulse Animation */
