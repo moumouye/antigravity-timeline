@@ -346,18 +346,33 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   /**
    * @param {TimelineTurnNode} node
    */
-  function jumpToTurn(node) {
+  async function jumpToTurn(node) {
     const viewport = getViewport();
-    if (!viewport || !node.element) return;
+    if (!viewport) return;
 
-    // Direct geometric delta calculation relative to viewport
+    // If node element is missing or not connected, or if history is still folded, expand fully first
+    if (!node.element || !node.element.isConnected || findLoadOlderBtn()) {
+      await expandAllHistorySilently();
+      const freshNodes = scanTurns();
+      const matched = freshNodes.find(n => n.index === node.index) ||
+                      freshNodes.find(n => n.userText === node.userText) ||
+                      freshNodes[node.index - 1];
+      if (matched && matched.element) {
+        node = matched;
+      }
+    }
+
+    if (!node.element || !node.element.isConnected) return;
+
+    // Use the true turn container instead of the sticky child
+    const turnContainer = node.element.closest('[class*="scroll-mt"]') || node.element;
     const vpRect = viewport.getBoundingClientRect();
-    const elRect = node.element.getBoundingClientRect();
+    const elRect = turnContainer.getBoundingClientRect();
     const currentScrollTop = viewport.scrollTop;
 
-    // Target position: card top aligned near viewport upper comfortable area
+    // Target position: place the turn's prompt cleanly at the top of the viewport
     const relativeOffset = elRect.top - vpRect.top;
-    const targetScrollTop = currentScrollTop + relativeOffset - 40; // 40px comfortable header clearance
+    const targetScrollTop = currentScrollTop + relativeOffset - 24;
 
     const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     const finalTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
@@ -378,15 +393,16 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     viewport.addEventListener('scroll', () => {
       if (currentNodes.length === 0) return;
       const vpRect = viewport.getBoundingClientRect();
-      const viewCenter = vpRect.top + (vpRect.height / 3);
+      const viewAnchor = vpRect.top + 60;
 
       let closestNode = null;
       let minDiff = Infinity;
 
       currentNodes.forEach(node => {
         if (!node.element) return;
-        const rect = node.element.getBoundingClientRect();
-        const diff = Math.abs(rect.top - viewCenter);
+        const turnContainer = node.element.closest('[class*="scroll-mt"]') || node.element;
+        const rect = turnContainer.getBoundingClientRect();
+        const diff = Math.abs(rect.top - viewAnchor);
         if (diff < minDiff) {
           minDiff = diff;
           closestNode = node;
@@ -409,6 +425,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
+
+    if (findLoadOlderBtn()) {
+      expandAllHistorySilently();
+    }
 
     currentNodes = scanTurns();
     ensureHandle();
