@@ -22,6 +22,7 @@ export interface TimelineTurnNode {
 
 export interface I18nTextMap {
   title: string;
+  settingsTabName: string;
   turnsCount: (count: number) => string;
   turnLabel: (num: number) => string;
   topButton: string;
@@ -32,10 +33,14 @@ export interface I18nTextMap {
   disableAutoScrollLabel: string;
   disableAutoScrollDesc: string;
   showMarkersLabel: string;
+  showMarkersDesc: string;
   showPreviewLabel: string;
+  showPreviewDesc: string;
   forkButton: string;
   forkTooltip: string;
   jumpTooltip: string;
   nowAtCurrent: string;
   noTurnsFound: string;
+  settingsTitle: string;
+  settingsSubtitle: string;
 }

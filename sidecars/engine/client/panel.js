@@ -23,7 +23,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     '#agy-timeline-track',
     '#agy-timeline-popover',
     '#agy-timeline-floating-btn',
-    '#agy-timeline-drawer'
+    '#agy-timeline-drawer',
+    '#agy-timeline-settings-tab',
+    '#agy-timeline-settings-panel'
   ];
   staleSelectors.forEach(sel => {
     document.querySelectorAll(sel).forEach(el => el.remove());
@@ -75,13 +77,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
   /** @type {TimelineTurnNode[]} */
   let currentNodes = [];
-  /** @type {HTMLElement | null} */
-  let currentViewport = null;
   /** @type {number | null} */
   let hoverTimer = null;
   let isDrawerOpen = false;
 
-  // 3. Find Viewport and Turns
+  // 3. Find Viewport and All Interactive Turns
   function getViewport() {
     return /** @type {HTMLElement | null} */ (
       document.querySelector('[data-testid="autoscroll-viewport"]') ||
@@ -90,67 +90,66 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
+  /**
+   * Scan all conversation turns accurately (Scans all user-input steps across entire conversation)
+   * @returns {TimelineTurnNode[]}
+   */
   function scanTurns() {
     const viewport = getViewport();
     if (!viewport) return [];
 
-    const turns = Array.from(document.querySelectorAll('[data-turn-content]'));
+    // All user question cards (each card represents one user turn)
+    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
     const scrollHeight = Math.max(viewport.scrollHeight, 1);
 
     /** @type {TimelineTurnNode[]} */
     const nodes = [];
 
-    turns.forEach((turnEl, idx) => {
-      const userStep = turnEl.querySelector('[class*="group/user-input-step"]') ||
-                       turnEl.querySelector('[data-testid="user-input-step"]') ||
-                       turnEl.querySelector('.whitespace-pre-wrap');
+    userCards.forEach((card, idx) => {
+      // 1. Extract User Prompt Text (Clean and truncate)
+      const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
+      const fullText = (quotable.textContent || '').trim();
+      const firstLine = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || `Turn #${idx + 1}`;
+      const cleanPrompt = firstLine.length > 50 ? firstLine.slice(0, 48) + '...' : firstLine;
 
-      // Extract user prompt text
-      let promptText = '';
-      if (userStep) {
-        const quotable = userStep.querySelector('[data-quotable]') || userStep;
-        promptText = (quotable.textContent || '').trim();
-      }
-
-      // If empty, fallback to first text line of turn
-      if (!promptText) {
-        promptText = (turnEl.textContent || '').trim().split('\n')[0] || `Turn #${idx + 1}`;
-      }
-
-      // Format prompt summary (clean excessive whitespace, keep first 2 lines)
-      const promptLines = promptText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      const cleanPrompt = promptLines.slice(0, 2).join(' ') || `Turn #${idx + 1}`;
-
-      // Extract timestamp (e.g. "12:55")
+      // 2. Extract Timestamp
       let timeStr = '';
-      const timeSpan = turnEl.querySelector('.text-muted-foreground.mr-2, span.text-xs');
-      if (timeSpan && /\b\d{1,2}:\d{2}\b/.test(timeSpan.textContent || '')) {
-        timeStr = timeSpan.textContent.trim();
-      } else {
-        const match = (turnEl.textContent || '').match(/\b\d{1,2}:\d{2}(?::\d{2})?\b/);
-        if (match) timeStr = match[0];
-      }
+      const match = (card.textContent || '').match(/\b\d{1,2}:\d{2}\b/);
+      if (match) timeStr = match[0];
 
-      // Extract response summary
+      // 3. Find Associated Agent Answer
+      let turnWrapper = card;
+      while (turnWrapper.parentElement && !turnWrapper.parentElement.className.includes('flex-col gap-0.5') && turnWrapper.parentElement !== document.body) {
+        turnWrapper = turnWrapper.parentElement;
+      }
+      const turnContainer = turnWrapper.parentElement || card.parentElement;
       let responseText = '';
-      const responseEl = turnEl.querySelector('[role="article"]:not(.sticky), [data-quotable="true"]');
-      if (responseEl) {
-        const text = (responseEl.textContent || '').replace(/\s+/g, ' ').trim();
-        responseText = text.slice(0, 80) + (text.length > 80 ? '...' : '');
-      } else {
+      if (turnContainer) {
+        // Find markdown paragraph inside agent answer
+        const pList = turnContainer.querySelectorAll('p, .markdown p, [class*="prose"] p');
+        for (const p of Array.from(pList)) {
+          const t = (p.textContent || '').replace(/\s+/g, ' ').trim();
+          if (t && !t.includes(cleanPrompt.slice(0, 15))) {
+            responseText = t;
+            break;
+          }
+        }
+      }
+      if (!responseText) {
         responseText = '...';
       }
+      const cleanResponse = responseText.length > 45 ? responseText.slice(0, 42) + '...' : responseText;
 
-      // Calculate relative vertical top position (percentage in viewport)
-      const elTop = /** @type {HTMLElement} */ (turnEl).offsetTop || 0;
+      // 4. Calculate relative vertical position
+      const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
       const topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
 
       nodes.push({
         index: idx + 1,
         userText: cleanPrompt,
-        responseText,
+        responseText: cleanResponse,
         timeStr,
-        element: /** @type {HTMLElement} */ (turnEl),
+        element: /** @type {HTMLElement} */ (card),
         topPercent,
         isActive: false
       });
@@ -172,7 +171,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return track;
   }
 
-  // 5. Create or Get Hover Popover
+  // 5. Create or Get Hover Popover (Strictly matches Image 3)
   function ensurePopover(track) {
     let popover = document.getElementById('agy-timeline-popover');
     if (!popover) {
@@ -191,37 +190,23 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return popover;
   }
 
-  function showPopover(node, markerEl) {
+  function showPopover(node) {
     const track = document.getElementById('agy-timeline-track');
     if (!track) return;
     const popover = ensurePopover(track);
 
     if (hoverTimer) clearTimeout(hoverTimer);
 
-    const txt = t();
+    // Image 3 layout: Row 1 = Prompt (truncated), Row 2 = Response Capsule (green, truncated)
     popover.innerHTML = `
-      <div class="agy-popover-prompt">${escapeHtml(node.userText)}</div>
-      <div class="agy-popover-response">${escapeHtml(node.responseText)}</div>
-      <div class="agy-popover-footer">
-        <span class="agy-popover-time">⏱️ ${escapeHtml(node.timeStr || txt.turnLabel(node.index))}</span>
-        <button class="agy-popover-fork-btn" title="${txt.forkTooltip}" data-fork-index="${node.index}">
-          🌿 ${txt.forkButton}
-        </button>
-      </div>
+      <div class="agy-popover-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
+      <div class="agy-popover-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
     `;
 
-    // Position popover vertically aligned with marker
     popover.style.top = `${node.topPercent}%`;
     popover.classList.add('show');
 
-    // Clicking popover body jumps to turn
-    popover.onclick = (e) => {
-      const target = /** @type {HTMLElement} */ (e.target);
-      if (target.closest('.agy-popover-fork-btn')) {
-        e.stopPropagation();
-        handleFork(node);
-        return;
-      }
+    popover.onclick = () => {
       jumpToTurn(node);
     };
   }
@@ -233,7 +218,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (popover) {
         popover.classList.remove('show');
       }
-    }, 150);
+    }, 120);
   }
 
   // 6. Jump to Turn with Highlight Animation
@@ -245,7 +230,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     node.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-    // Highlight target element
     node.element.classList.remove('agy-timeline-target-highlight');
     void node.element.offsetWidth; // Trigger reflow
     node.element.classList.add('agy-timeline-target-highlight');
@@ -257,20 +241,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     hidePopover();
   }
 
-  // 7. Fork Interaction
-  /**
-   * @param {TimelineTurnNode} node
-   */
-  function handleFork(node) {
-    console.log('[Timeline] Fork requested from turn node:', node.index, node.userText);
-    const confirmed = window.confirm(`[Fork 对话分支]\n准备从第 ${node.index} 轮开启独立子分支：\n"${node.userText.slice(0, 35)}..."`);
-    if (confirmed) {
-      // Future integration with Language Server Fork RPC
-      alert(`已锁定第 ${node.index} 轮对话快照，新分支已就绪。`);
-    }
-  }
-
-  // 8. Render Right-edge Markers (Matches User Screenshot ==)
+  // 7. Render Right-edge Markers (Matches Screenshot ==)
   function renderMarkers(track, nodes) {
     track.querySelectorAll('.agy-timeline-marker').forEach(el => el.remove());
 
@@ -280,7 +251,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const marker = document.createElement('div');
       marker.className = `agy-timeline-marker ${node.isActive ? 'is-active' : ''}`;
       marker.style.top = `${node.topPercent}%`;
-      marker.title = `${t().turnLabel(node.index)}: ${node.userText.slice(0, 30)}`;
+      marker.title = `${t().turnLabel(node.index)}: ${node.userText}`;
 
       // Double line bars (Matches Screenshot ==)
       marker.innerHTML = `
@@ -290,7 +261,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
       marker.addEventListener('mouseenter', () => {
         if (currentPrefs.showHoverPreview) {
-          showPopover(node, marker);
+          showPopover(node);
         }
       });
 
@@ -307,7 +278,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 9. Floating Action Button
+  // 8. Floating Action Button
   function ensureFloatingBtn(viewport) {
     let btn = document.getElementById('agy-timeline-floating-btn');
     if (!btn) {
@@ -329,7 +300,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return btn;
   }
 
-  // 10. Drawer Panel
+  // 9. Drawer Panel
   function ensureDrawer(viewport) {
     let drawer = document.getElementById('agy-timeline-drawer');
     if (!drawer) {
@@ -368,7 +339,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       <div class="agy-drawer-list" id="agy-drawer-list"></div>
     `;
 
-    // Drawer list items
     const listEl = drawer.querySelector('#agy-drawer-list');
     if (listEl) {
       if (nodes.length === 0) {
@@ -383,18 +353,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
               <div class="agy-node-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
               <div class="agy-node-meta">
                 <span>⏱️ ${escapeHtml(node.timeStr || txt.turnLabel(node.index))}</span>
-                <button class="agy-popover-fork-btn" data-fork-idx="${node.index}" title="${txt.forkTooltip}">🌿 ${txt.forkButton}</button>
               </div>
             </div>
           `;
 
-          item.addEventListener('click', (e) => {
-            const target = /** @type {HTMLElement} */ (e.target);
-            if (target.closest('.agy-popover-fork-btn')) {
-              e.stopPropagation();
-              handleFork(node);
-              return;
-            }
+          item.addEventListener('click', () => {
             jumpToTurn(node);
           });
 
@@ -403,7 +366,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       }
     }
 
-    // Header buttons
     drawer.querySelector('#agy-drawer-top-btn')?.addEventListener('click', () => {
       viewport.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -414,9 +376,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       toggleDrawer(false);
     });
 
-    // Auto-scroll preference toggle
     const prefCheckbox = /** @type {HTMLInputElement | null} */ (drawer.querySelector('#agy-pref-autoscroll'));
-    prefCheckbox?.addEventListener('change', (e) => {
+    prefCheckbox?.addEventListener('change', () => {
       savePrefs({ disableAutoScrollOnSend: prefCheckbox.checked });
     });
   }
@@ -429,13 +390,12 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
   }
 
-  // 11. Smart Scroll Lock (Disable auto-scroll on new message / streaming)
+  // 10. Smart Scroll Lock
   let lastUserScrollTop = 0;
   let isLockedByPreference = false;
 
   function setupScrollController(viewport) {
     viewport.addEventListener('scroll', () => {
-      // Track active node for Scrollspy
       const viewCenter = viewport.scrollTop + (viewport.clientHeight / 3);
       let closestNode = null;
       let minDiff = Infinity;
@@ -459,23 +419,19 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         }
       }
 
-      // Record scroll position when user manually scrolls
       const isAtBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) < 40;
       if (!isAtBottom) {
         lastUserScrollTop = viewport.scrollTop;
       }
     }, { passive: true });
 
-    // Intercept scroll-to-bottom on send when preference is enabled
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && currentPrefs.disableAutoScrollOnSend) {
         const activeEl = document.activeElement;
         if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.getAttribute('contenteditable') === 'true')) {
-          // User is sending a prompt
           isLockedByPreference = true;
           lastUserScrollTop = viewport.scrollTop;
 
-          // Maintain viewport for next 1.5s while response starts streaming
           const lockInterval = setInterval(() => {
             if (isLockedByPreference && viewport.scrollTop !== lastUserScrollTop) {
               viewport.scrollTop = lastUserScrollTop;
@@ -491,12 +447,159 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, true);
   }
 
+  // 11. Native Antigravity Settings Modal Integration
+  function setupSettingsModalIntegration() {
+    function checkModal() {
+      const dialog = document.querySelector('div[role="dialog"]');
+      if (!dialog) return;
+
+      const sidebarNav = dialog.querySelector('.bg-sidebar, nav, [role="tablist"], .flex.flex-col.gap-1');
+      if (!sidebarNav || dialog.querySelector('#agy-timeline-settings-tab')) return;
+
+      // Create Settings Tab Button
+      const tabBtn = document.createElement('button');
+      tabBtn.id = 'agy-timeline-settings-tab';
+      tabBtn.className = 'inline-flex items-center font-medium transition-colors select-none outline-none cursor-pointer flex-grow w-full justify-start select-none font-normal h-8 min-w-0 gap-1.5 px-2 py-1 rounded-lg bg-transparent text-secondary-foreground hover:bg-sidebar-muted hover:text-foreground text-sm';
+      tabBtn.innerHTML = `
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--agy-timeline-accent);">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+        <span>${t().settingsTabName}</span>
+      `;
+
+      // Find insertion point
+      const lastBtn = sidebarNav.querySelector('button:last-child');
+      if (lastBtn && lastBtn.parentElement) {
+        lastBtn.parentElement.appendChild(tabBtn);
+      } else {
+        sidebarNav.appendChild(tabBtn);
+      }
+
+      // Find Right Content Pane
+      let rightPane = dialog.querySelector('.flex-1.min-w-0.overflow-y-auto, .flex-1.p-6, .overflow-y-auto:not(.bg-sidebar)');
+      if (!rightPane) {
+        const panes = Array.from(dialog.querySelectorAll('div')).filter(d => d.clientHeight > 200 && d !== sidebarNav && !sidebarNav.contains(d));
+        rightPane = panes[panes.length - 1];
+      }
+
+      tabBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Highlight this tab
+        sidebarNav.querySelectorAll('button').forEach(b => {
+          b.classList.remove('bg-secondary', 'text-foreground');
+        });
+        tabBtn.classList.add('bg-secondary', 'text-foreground');
+
+        if (rightPane) {
+          // Hide other native views
+          Array.from(rightPane.children).forEach(c => {
+            if (c.id !== 'agy-timeline-settings-panel') {
+              (/** @type {HTMLElement} */ (c)).style.display = 'none';
+            }
+          });
+
+          // Show timeline settings panel
+          let panel = rightPane.querySelector('#agy-timeline-settings-panel');
+          if (!panel) {
+            panel = renderSettingsPanel();
+            rightPane.appendChild(panel);
+          }
+          (/** @type {HTMLElement} */ (panel)).style.display = 'block';
+        }
+      });
+
+      // Reset when other native tabs are clicked
+      dialog.addEventListener('click', (e) => {
+        const target = /** @type {HTMLElement} */ (e.target);
+        const clickedBtn = target?.closest('button');
+        if (clickedBtn && clickedBtn !== tabBtn && sidebarNav.contains(clickedBtn)) {
+          tabBtn.classList.remove('bg-secondary', 'text-foreground');
+          const panel = rightPane?.querySelector('#agy-timeline-settings-panel');
+          if (panel) {
+            (/** @type {HTMLElement} */ (panel)).style.display = 'none';
+          }
+        }
+      });
+    }
+
+    function renderSettingsPanel() {
+      const panel = document.createElement('div');
+      panel.id = 'agy-timeline-settings-panel';
+      panel.className = 'h-full w-full overflow-y-auto px-8 py-6 select-none';
+
+      const txt = t();
+      panel.innerHTML = `
+        <div style="margin-bottom:20px;">
+          <h2 style="font-size:18px;font-weight:600;color:var(--foreground);">${txt.settingsTitle}</h2>
+          <p style="font-size:12.5px;color:var(--muted-foreground);margin-top:4px;">${txt.settingsSubtitle}</p>
+        </div>
+
+        <div class="agy-settings-card">
+          <div class="agy-settings-row">
+            <div class="agy-settings-label-group">
+              <span class="agy-settings-item-title">${txt.disableAutoScrollLabel}</span>
+              <span class="agy-settings-item-desc">${txt.disableAutoScrollDesc}</span>
+            </div>
+            <label class="agy-toggle-switch">
+              <input type="checkbox" id="agy-set-autoscroll" ${currentPrefs.disableAutoScrollOnSend ? 'checked' : ''} />
+              <span class="agy-toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="agy-settings-row" style="border-top:1px solid var(--border);padding-top:12px;">
+            <div class="agy-settings-label-group">
+              <span class="agy-settings-item-title">${txt.showMarkersLabel}</span>
+              <span class="agy-settings-item-desc">${txt.showMarkersDesc}</span>
+            </div>
+            <label class="agy-toggle-switch">
+              <input type="checkbox" id="agy-set-markers" ${currentPrefs.showRightEdgeMarkers ? 'checked' : ''} />
+              <span class="agy-toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="agy-settings-row" style="border-top:1px solid var(--border);padding-top:12px;">
+            <div class="agy-settings-label-group">
+              <span class="agy-settings-item-title">${txt.showPreviewLabel}</span>
+              <span class="agy-settings-item-desc">${txt.showPreviewDesc}</span>
+            </div>
+            <label class="agy-toggle-switch">
+              <input type="checkbox" id="agy-set-preview" ${currentPrefs.showHoverPreview ? 'checked' : ''} />
+              <span class="agy-toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      `;
+
+      // Event listeners for settings
+      panel.querySelector('#agy-set-autoscroll')?.addEventListener('change', (e) => {
+        savePrefs({ disableAutoScrollOnSend: (/** @type {HTMLInputElement} */ (e.target)).checked });
+      });
+      panel.querySelector('#agy-set-markers')?.addEventListener('change', (e) => {
+        savePrefs({ showRightEdgeMarkers: (/** @type {HTMLInputElement} */ (e.target)).checked });
+      });
+      panel.querySelector('#agy-set-preview')?.addEventListener('change', (e) => {
+        savePrefs({ showHoverPreview: (/** @type {HTMLInputElement} */ (e.target)).checked });
+      });
+
+      return panel;
+    }
+
+    const observer = new MutationObserver(() => {
+      checkModal();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    checkModal();
+    return observer;
+  }
+
   // 12. Main Update Loop
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
 
-    currentViewport = viewport;
     currentNodes = scanTurns();
 
     const track = ensureTrackContainer(viewport);
@@ -505,36 +608,27 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     renderDrawer(currentNodes);
   }
 
-  // 13. MutationObserver for dynamic conversations
+  // 13. MutationObserver for dynamic turns
   let updateDebounceTimer = null;
-  const observer = new MutationObserver((mutations) => {
-    let shouldUpdate = false;
-    for (const m of mutations) {
-      if (m.type === 'childList' && (m.addedNodes.length > 0 || m.removedNodes.length > 0)) {
-        shouldUpdate = true;
-        break;
-      }
-    }
-    if (shouldUpdate) {
-      if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
-      updateDebounceTimer = setTimeout(() => {
-        renderUI();
-      }, 250);
-    }
+  const domObserver = new MutationObserver(() => {
+    if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
+    updateDebounceTimer = setTimeout(() => {
+      renderUI();
+    }, 250);
   });
-
-  const targetObserve = document.body;
-  observer.observe(targetObserve, { childList: true, subtree: true });
+  domObserver.observe(document.body, { childList: true, subtree: true });
 
   const initialViewport = getViewport();
   if (initialViewport) {
     setupScrollController(initialViewport);
   }
+  const modalObs = setupSettingsModalIntegration();
   renderUI();
 
   // 14. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
-    observer.disconnect();
+    domObserver.disconnect();
+    try { modalObs.disconnect(); } catch {}
     staleSelectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => el.remove());
     });
