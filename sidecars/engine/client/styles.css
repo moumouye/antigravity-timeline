@@ -24,7 +24,7 @@
   top: 50%;
   transform: translateY(-50%);
   width: 18px;
-  height: 48px;
+  height: 52px;
   background-color: var(--agy-timeline-bg);
   border: 1px solid var(--agy-timeline-border);
   border-right: none;
@@ -37,7 +37,7 @@
   justify-content: center;
   align-items: center;
   gap: 3.5px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
   user-select: none;
 }
 
@@ -65,28 +65,41 @@
   box-shadow: 0 0 8px var(--agy-timeline-accent);
 }
 
-/* 2. Hover Expanded All-Turns Timeline Menu */
+/* 2. Hover Expanded All-Turns Timeline Menu (Seamless bridge with zero gap) */
 #agy-timeline-menu {
   position: fixed;
-  right: 24px;
+  right: 18px;
   top: 50%;
-  transform: translateY(-50%) translateX(12px);
+  transform: translateY(-50%) translateX(10px);
   width: 330px;
-  max-width: calc(100vw - 48px);
+  max-width: calc(100vw - 40px);
   max-height: 72vh;
   border-radius: 16px;
   background-color: var(--agy-timeline-bg);
   color: var(--agy-timeline-fg);
   border: 1px solid var(--agy-timeline-border);
-  box-shadow: 0 16px 40px -4px rgba(0, 0, 0, 0.24), 0 6px 16px -2px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 16px 40px -4px rgba(0, 0, 0, 0.22), 0 6px 16px -2px rgba(0, 0, 0, 0.1);
   backdrop-filter: blur(20px);
   z-index: 100;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s;
+  transition: opacity 0.16s ease, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.16s;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  contain: layout style;
+}
+
+/* Seamless Hover Bridge connecting Menu to Handle */
+#agy-timeline-menu::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -24px;
+  width: 24px;
+  height: 100%;
+  background: transparent;
+  pointer-events: auto;
 }
 
 #agy-timeline-menu.show {
@@ -103,6 +116,7 @@
   padding: 10px 14px;
   border-bottom: 1px solid var(--agy-timeline-border);
   background-color: rgba(125, 125, 125, 0.03);
+  flex-shrink: 0;
 }
 
 .agy-menu-title {
@@ -132,9 +146,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overscroll-behavior: contain;
 }
 
-/* Turn Card Item */
+/* Turn Card Item (No layout-shifting transform on hover to eliminate flicker) */
 .agy-turn-card {
   padding: 8px 10px;
   border-radius: 10px;
@@ -144,13 +159,14 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  transition: all 0.15s ease;
+  box-sizing: border-box;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+  user-select: none;
 }
 
 .agy-turn-card:hover {
   background-color: rgba(125, 125, 125, 0.08);
   border-color: var(--agy-timeline-border);
-  transform: translateX(-2px);
 }
 
 .agy-turn-card.is-active {

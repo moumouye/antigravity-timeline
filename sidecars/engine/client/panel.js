@@ -65,6 +65,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   /** @type {number | null} */
   let hideTimer = null;
   let isLoadingOlder = false;
+  let isHoveringMenuOrHandle = false;
 
   // 3. Find Viewport
   function getViewport() {
@@ -127,7 +128,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const nodes = [];
 
     userCards.forEach((card, idx) => {
-      // 1. Extract User Prompt Text (Clean and truncate)
+      // 1. Extract User Prompt Text
       const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
       const fullText = (quotable.textContent || '').trim();
       const firstLine = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || `Turn #${idx + 1}`;
@@ -190,13 +191,26 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       `;
       document.body.appendChild(handle);
 
-      handle.addEventListener('mouseenter', () => {
+      const onHandleEnter = () => {
+        isHoveringMenuOrHandle = true;
+        if (hideTimer) clearTimeout(hideTimer);
         showMenu();
-      });
+      };
 
-      handle.addEventListener('mouseleave', () => {
+      const onHandleLeave = (e) => {
+        const related = /** @type {Node | null} */ (e.relatedTarget);
+        const menu = document.getElementById('agy-timeline-menu');
+        if (related && menu && (menu === related || menu.contains(related))) {
+          return;
+        }
+        isHoveringMenuOrHandle = false;
         scheduleHideMenu();
-      });
+      };
+
+      handle.addEventListener('pointerenter', onHandleEnter);
+      handle.addEventListener('mouseenter', onHandleEnter);
+      handle.addEventListener('pointerleave', onHandleLeave);
+      handle.addEventListener('mouseleave', onHandleLeave);
     }
     return handle;
   }
@@ -209,13 +223,25 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       menu.id = 'agy-timeline-menu';
       document.body.appendChild(menu);
 
-      menu.addEventListener('mouseenter', () => {
+      const onMenuEnter = () => {
+        isHoveringMenuOrHandle = true;
         if (hideTimer) clearTimeout(hideTimer);
-      });
+      };
 
-      menu.addEventListener('mouseleave', () => {
+      const onMenuLeave = (e) => {
+        const related = /** @type {Node | null} */ (e.relatedTarget);
+        const handle = document.getElementById('agy-timeline-handle');
+        if (related && handle && (handle === related || handle.contains(related))) {
+          return;
+        }
+        isHoveringMenuOrHandle = false;
         scheduleHideMenu();
-      });
+      };
+
+      menu.addEventListener('pointerenter', onMenuEnter);
+      menu.addEventListener('mouseenter', onMenuEnter);
+      menu.addEventListener('pointerleave', onMenuLeave);
+      menu.addEventListener('mouseleave', onMenuLeave);
     }
     return menu;
   }
@@ -233,14 +259,29 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function scheduleHideMenu() {
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = window.setTimeout(() => {
-      const menu = document.getElementById('agy-timeline-menu');
-      const handle = document.getElementById('agy-timeline-handle');
-      if (menu) menu.classList.remove('show');
-      if (handle) handle.classList.remove('is-active');
-    }, 200);
+      if (!isHoveringMenuOrHandle) {
+        const menu = document.getElementById('agy-timeline-menu');
+        const handle = document.getElementById('agy-timeline-handle');
+        if (menu) menu.classList.remove('show');
+        if (handle) handle.classList.remove('is-active');
+      }
+    }, 280);
   }
 
+  /**
+   * Render menu list safely without rebuilding DOM if already populated
+   * @param {HTMLElement} menu
+   * @param {TimelineTurnNode[]} nodes
+   */
   function renderMenuList(menu, nodes) {
+    const listEl = menu.querySelector('#agy-menu-list');
+
+    // If already rendered with exact same count, avoid destroying innerHTML to eliminate hover flicker
+    if (listEl && listEl.children.length === nodes.length && nodes.length > 0) {
+      updateActiveCardClasses(menu, nodes);
+      return;
+    }
+
     const txt = t();
     menu.innerHTML = `
       <div class="agy-menu-header">
@@ -252,28 +293,45 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       <div class="agy-menu-list" id="agy-menu-list"></div>
     `;
 
-    const listEl = menu.querySelector('#agy-menu-list');
-    if (listEl) {
+    const newListEl = menu.querySelector('#agy-menu-list');
+    if (newListEl) {
       if (nodes.length === 0) {
-        listEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
+        newListEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
       } else {
         nodes.forEach(node => {
           const card = document.createElement('div');
           card.className = `agy-turn-card ${node.isActive ? 'is-active' : ''}`;
+          card.setAttribute('data-turn-idx', String(node.index));
           card.innerHTML = `
             <div class="agy-turn-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
             <div class="agy-turn-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
           `;
 
-          card.addEventListener('click', () => {
+          card.addEventListener('click', (e) => {
+            e.stopPropagation();
             jumpToTurn(node);
             scheduleHideMenu();
           });
 
-          listEl.appendChild(card);
+          newListEl.appendChild(card);
         });
       }
     }
+  }
+
+  /**
+   * Granular class-only update for active states (zero DOM recreation)
+   * @param {HTMLElement} menu
+   * @param {TimelineTurnNode[]} nodes
+   */
+  function updateActiveCardClasses(menu, nodes) {
+    const cards = menu.querySelectorAll('.agy-turn-card');
+    cards.forEach((card, idx) => {
+      const node = nodes[idx];
+      if (node) {
+        card.classList.toggle('is-active', Boolean(node.isActive));
+      }
+    });
   }
 
   // 8. Jump to Turn with Smooth Scroll and Pulse Glow
@@ -319,7 +377,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         });
         const menu = document.getElementById('agy-timeline-menu');
         if (menu && menu.classList.contains('show')) {
-          renderMenuList(menu, currentNodes);
+          updateActiveCardClasses(menu, currentNodes);
         }
       }
 
@@ -351,7 +409,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, true);
   }
 
-  // 10. Main Update Loop
+  // 10. Main Update Loop (Safe when user is interacting)
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
@@ -359,8 +417,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     currentNodes = scanTurns();
     ensureHandle();
 
+    // If user is actively hovering over menu, do not destroy/rebuild DOM to eliminate flicker
     const menu = document.getElementById('agy-timeline-menu');
-    if (menu && menu.classList.contains('show')) {
+    if (menu && menu.classList.contains('show') && !isHoveringMenuOrHandle) {
       renderMenuList(menu, currentNodes);
     }
   }
@@ -372,7 +431,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     updateDebounceTimer = setTimeout(() => {
       autoExpandCollapsedMessages();
       renderUI();
-    }, 250);
+    }, 300);
   });
   domObserver.observe(document.body, { childList: true, subtree: true });
 
