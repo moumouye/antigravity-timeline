@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 - ⚡ `perf`: 将冷数据按需展开等待机制重构为微任务级 DOM Mutation 侦听，将首次冷跳转等待响应耗时大幅压缩至 150ms 左右
+- 📝 `docs`: 依照 AI 原生软件工程范式重塑 ARCHITECTURE.md（四维真理库）、AGENTS.md（精简指针与门禁）与 README.md
 
 ## [1.5.0] - 2026-10-21
 

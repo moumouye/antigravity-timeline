@@ -1,77 +1,106 @@
-# 系统架构与实现原理 (System Architecture)
+# 系统架构与契约真理 (System Architecture & Truth)
 
-本项目为 Antigravity 桌面客户端提供非侵入式、极简纯粹的对话时间线导航与智能视口控制能力。无需解包客户端二进制或修改 `app.asar`，利用 Antigravity 原生 Sidecar 运行机制与 Chrome DevTools Protocol (CDP) 调试桥接，实现右侧中间手柄悬停展开全量对话提问列表、条目点击平滑定位、智能视口防滚屏锁定与免重启热重载。
+本项目为 Antigravity 桌面客户端提供非侵入式的对话时间线导航与智能视口控制能力。
+依托 Antigravity 原生 Sidecar 运行机制与 Chrome DevTools Protocol (CDP) 调试通道，实现右侧侧边手柄悬停展开全量对话提问列表、冷数据按需挂载平滑定位、智能视口防滚屏锁定与热重载。
 
 ---
 
-## 1. 系统总体架构 (System Architecture)
+## 一、 边界与红线 (Boundaries)
 
-系统由 **宿主层 (Host)**、**引擎层 (Sidecar Engine)**、**注入层 (Page Renderer)** 与 **数据持久化层 (Storage)** 四部分组成：
+任何针对本项目的开发或修改，必须严格遵守以下物理红线：
+
+1. **主视口绝对静止红线 (Zero Scroll Displacement)**：
+   * 鼠标悬停右侧手柄、划入菜单、滚轮查阅时间线卡片，属于 **100% 纯读动作**；
+   * 悬停交互期间，主聊天视口位移严格恒定为 `0 像素`（`viewportScrollDelta === 0`），严禁触发任何导致宿主重新计算滚动高度的模拟点击。
+2. **沙箱通信隔离红线 (No Direct Local File Fetch)**：
+   * 页面注入层（`client/`）运行在 Chromium 浏览器上下文中，受安全策略限制**绝对无法直接 `fetch("file://...")`**；
+   * 所有针对本地日志、配置文件和底层会话数据的访问，必须由后台 Node.js Sidecar 引擎读取，并通过 CDP WebSocket 双向绑定信道安全推送到前端。
+3. **冷热数据解耦红线 (Cold Metadata Decoupling)**：
+   * 菜单时间线展示全量会话历史时，仅消费内存中的轻量 Prompt 元数据，严禁为了显示菜单而强行将全部早期节点展开挂载进宿主 DOM；
+   * 仅当用户在菜单中**显式单击了某一轮折叠会话**时，才允许定向触发宿主展开该轮次并平滑定位。
+4. **后台守护托管红线 (Host Daemon Ownership)**：
+   * 插件后台引擎由 Antigravity 宿主插件系统在系统底层静默托管（`sidecar.json`）；
+   * 交互工具严禁在用户会话级别启动常驻守护任务（Daemon Task），避免在用户操作界面出现干扰性的后台旋转任务框。
+
+---
+
+## 二、 契约与流向 (Contracts & Pipeline)
+
+系统的唯一真实数据源（Single Source of Truth）为宿主本地持久化日志，整体采用**单向数据流管道**架构：
 
 ```mermaid
 flowchart TB
-    subgraph Host ["🖥️ Antigravity 宿主层 (Electron)"]
-        DevTools["DevTools 活跃调试端口<br/>(DevToolsActivePort)"]
-        Renderer["主渲染进程窗口<br/>(autoscroll-viewport / group/user-input-step)"]
+    subgraph HostFS ["💾 宿主底层持久化 (Source of Truth)"]
+        Transcript["~/.gemini/antigravity/brain/<conv-id>/.system_generated/logs/transcript.jsonl<br/>(100% 真实全量对话历史)"]
+        DevToolsPort["DevToolsActivePort<br/>(CDP 动态调试端口)"]
     end
 
-    subgraph Sidecar ["⚙️ 引擎服务层 (Sidecar Engine)"]
-        Main["main.mjs 守护进程<br/>(零依赖动态装配器)"]
-        CDP["CDP Client (WebSocket)"]
-        Watcher["源码变动轮询感知器 (3s Tick)"]
+    subgraph SidecarEngine ["⚙️ 引擎服务层 (sidecars/engine/main.mjs)"]
+        Scanner["会话感知与日志解析器<br/>(剥离元标签 / 提取纯净 Prompt / 1.2s 心跳)"]
+        CdpHost["CDP WebSocket 桥接客户端<br/>(Runtime.evaluate / Runtime.addBinding)"]
     end
 
-    subgraph Client ["🎨 渲染注入层源码 (sidecars/engine/client/)"]
-        Types["types.d.ts (TS 接口约束)"]
-        Styles["styles.css (纯 CSS 与动效)"]
-        I18n["i18n.js (中英双语字典)"]
-        Panel["panel.js (全量折叠展开、DOM 扫描与交互)"]
+    subgraph InjectedClient ["🎨 页面注入层 (sidecars/engine/client/panel.js)"]
+        Receiver["window.__agyReceiveFullTurns(convId, turns)<br/>(内存全量元数据仓库)"]
+        DOMReconcile["DOM 挂载探针 (scanTurns)<br/>(匹配当前视口已有卡片，区分已挂载与已折叠)"]
+        ActiveSpy["视口活跃度解算器 (updateActiveNode)<br/>(底部聚焦最新，中间聚焦临近轮次)"]
+        RenderGuard["增量签名守卫 (data-renderedSignature)<br/>(无新增轮次时仅更新样式类，DOM 零重绘)"]
+        UIEntry["右侧居中手柄与时间线弹出菜单<br/>(#agy-timeline-handle / #agy-timeline-menu)"]
     end
 
-    subgraph Injected ["🎨 渲染注入层 (Page Context)"]
-        AutoExpand["折叠历史自动平滑展开器 (Load older messages)"]
-        Handle["右侧侧边中间手柄 (#agy-timeline-handle)"]
-        Menu["悬停展开纯提问对话菜单 (#agy-timeline-menu)"]
-        ScrollController["智能视口锁定与 Scrollspy 监听"]
-        Binding["__agyTimelineSavePrefs() RPC 绑定"]
-    end
+    DevToolsPort -->|探测端口| CdpHost
+    CdpHost <==>|CDP 双向信道| Receiver
+    Transcript -->|读取全量日志| Scanner
+    Scanner -->|推送全量轮次数组| CdpHost
+    Receiver --> DOMReconcile
+    DOMReconcile --> ActiveSpy
+    ActiveSpy --> RenderGuard
+    RenderGuard --> UIEntry
+```
 
-    subgraph Storage ["💾 数据持久化层"]
-        Prefs["preferences.json<br/>(用户偏好与视口锁定设置)"]
-    end
+### 核心数据契约类型
 
-    Main -->|探测调试端口| DevTools
-    Main -->|建立 WebSocket 会话| CDP
-    CDP <==>|双向通信通道| Renderer
-
-    Watcher -->|监听模块文件变动| Client
-    Client -->|内存动态装配| Main
-    Main -->|运行时 CDP 动态评估注入| CDP
-
-    Renderer --> AutoExpand
-    AutoExpand --> Handle
-    Handle -->|鼠标悬停| Menu
-    Menu -->|点击提问条目| Renderer
-    Renderer --> ScrollController
-    ScrollController -->|偏好回传| Binding
-    Binding -->|CDP 事件回传| Main
-    Main -->|原子写入| Prefs
-    Prefs -.->|启动时回填| Main
+```typescript
+export interface TimelineTurnNode {
+  index: number;              // 轮次编号（从 1 开始递增）
+  userText: string;           // 纯净提问摘要（两行截断预览）
+  fullText?: string;          // 完整提问正文（用于跨 DOM 前缀精确匹配）
+  stepIndex?: number;         // 底层 transcript 内部步骤索引
+  responseText: string;       // 留空（纯提问高密度排版，剥离回复）
+  timeStr: string;            // 时间戳标记
+  element: HTMLElement | null;// 当前是否挂载在宿主 DOM 树上
+  topPercent: number;         // 相对滚动高度百分比
+  isActive: boolean;          // 是否为当前视口聚焦轮次
+  isFolded?: boolean;         // 是否为未载入 DOM 的早期冷数据
+}
 ```
 
 ---
 
-## 2. 聚焦用户提问的高信息密度排版
+## 三、 否决方案与避坑档案 (Anti-Patterns)
 
-1. **统一锚定至右侧中间区域**：时间线交互入口采用吸附手柄形式固定在视口右侧侧边垂直中间位置（`top: 50%; transform: translateY(-50%)`），手柄与菜单通过无缝桥接实现零失焦平滑联动；
-2. **纯粹提问列表展现**：菜单内专注罗列用户的各轮次提问正文，剥离模型前言回复，单条卡片支持最多两行多文本折叠截断（`-webkit-line-clamp: 2`），单屏可容纳更多轮次，快速检索定位；
-3. **条目点击毫秒级跳转**：用户在列表中点击任意一轮卡片，主视口通过原生 `scrollIntoView({ behavior: 'smooth', block: 'center' })` 定位至对应位置，并触发目标消息 1.4 秒专属柔和光晕脉冲；
-4. **历史折叠消息平滑预载**：启动时检测并平滑展开被宿主折叠的历史交互，保证长对话的所有轮次完整列出。
+以下方案在前期演进中已被**实测否决**，后续维护严禁再次重蹈覆辙：
+
+| 被枪毙的方案 (Dead End) | 触发缺陷与恶果 | 根本原因 | 唯一正确替代方案 |
+| :--- | :--- | :--- | :--- |
+| **1. 纯前端 DOM 刮取**<br>`querySelectorAll('group/user-input-step')` | 时间线列表严重残缺，长对话往往只展示 2~3 轮。 | 宿主原生实现了虚拟化列表与顶部消息冷折叠，早期历史根本不在前端 DOM 树上。 | **底层直通**：由 Sidecar 直接读取底层 `transcript.jsonl`，获得 100% 完整会话。 |
+| **2. 悬停/启动时模拟点击展开**<br>`loadBtn.click()` 递归展开 | 鼠标一放上去，画面瞬间跳回第 2 轮；滚动条剧烈伸缩、正文疯狂闪烁。 | 触发宿主全量排版重排算法，强行篡改了宿主内部的视口滚动锚点。 | **冷热解耦**：全量元数据内存直显；悬停 100% 纯读，绝不触发点击。 |
+| **3. 粗粒度固定轮询等待**<br>`while (...) await sleep(260)` | 点击早期折叠卡片时，出现明显迟滞与卡顿（约 1 秒延迟）。 | 固定延时与宿主实际渲染节奏脱节，多次重试累积等待时间。 | **微任务侦听**：使用 `MutationObserver` 侦听宿主 DOM 插入，118ms 瞬时捕获并直达。 |
+| **4. 每次渲染粗暴重建 innerHTML** | 鼠标划过卡片时列表闪烁，滚动条位置被反复重置回顶部。 | 销毁已有 DOM 导致浏览器重新布局（Reflow），丢失滚动状态。 | **特征签名守卫**：比对 `dataset.renderedSignature`，无新轮次时仅执行类名微调。 |
 
 ---
 
-## 3. 关键设计原则与隔离规范
+## 四、 自动化验收门禁 (Verification Gate)
 
-1. **非侵入原则**：完全依托 Antigravity 官方 Sidecar 架构与 CDP 调试协议，不修改客户端二进制或 ASAR 归档。
-2. **文本截断与紧凑排版**：提问正文支持两行规整折叠截断，卡片无尺寸位移振荡，保证高频滑动时绝对平稳。
-3. **零外部依赖**：管理脚本 [`manage.py`](manage.py) 完全基于 Python 3 标准库构建，无需 pip 安装任何三方库；卸载时提供纯净 5 步清理，确保系统零残留。
+任何代码修改在交付前，必须运行本地端到端测试链路：
+
+```bash
+python3 manage.py test
+```
+
+### 必须满足的硬性断言 (Hard Assertions)
+1. **主视口位移恒为零**：`viewportScrollDelta === 0`，模拟悬停手柄展开菜单，主视口位移严格为 0 像素；
+2. **全量会话无遗漏**：`totalTurnsInMenu === transcriptTurns.length`，菜单内卡片数量必须与底层 `transcript.jsonl` 完全一致；
+3. **活跃卡片正确对齐**：主视口位于底部时，菜单默认聚焦激活最底部最新轮次；
+4. **定向定位与光晕脉冲**：点击条目能够执行平滑直达定位，并激活目标卡片 1.4 秒专属脉冲光晕（`agy-timeline-target-highlight`）；
+5. **残留元素零容忍**：界面严禁出现残留的旧浮动按钮或无主手柄。
