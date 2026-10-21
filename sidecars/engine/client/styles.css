@@ -172,6 +172,23 @@
   border-color: rgba(16, 185, 129, 0.45);
 }
 
+.agy-turn-card.is-folded {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+.agy-turn-card.is-folded:hover {
+  opacity: 1;
+  border-style: solid;
+}
+
+.agy-turn-card.is-loading {
+  opacity: 0.75;
+  pointer-events: none;
+  background-color: var(--agy-timeline-accent-light);
+  border-color: var(--agy-timeline-accent);
+}
+
 /* Load Older Messages Action Header */
 .agy-timeline-load-btn {
   display: flex;

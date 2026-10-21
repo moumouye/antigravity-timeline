@@ -58,6 +58,58 @@ function buildWrappedScript(injectScript, savedPrefs) {
   `;
 }
 
+async function loadTranscriptTurns(convId) {
+  if (!convId) return [];
+  const filePath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
+  try {
+    if (!existsSync(filePath)) return [];
+    const raw = await readFile(filePath, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const turns = [];
+    let turnIdx = 1;
+    for (const line of lines) {
+      try {
+        const item = JSON.parse(line);
+        if (item.type === 'USER_INPUT') {
+          let text = (item.content || '').trim();
+          text = text.replace(/<\/?USER_REQUEST>/g, '')
+                     .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
+                     .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
+                     .trim();
+          const lns = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          const preview = lns.slice(0, 2).join(' ') || (`Turn #${turnIdx}`);
+          turns.push({
+            index: turnIdx++,
+            stepIndex: item.step_index,
+            preview: preview.length > 120 ? preview.slice(0, 118) + '...' : preview,
+            fullText: text,
+            createdAt: item.created_at || ''
+          });
+        }
+      } catch {}
+    }
+    return turns;
+  } catch {
+    return [];
+  }
+}
+
+async function pushTurnsToPage(client, convId) {
+  if (!client || client.closed || !convId) return;
+  const turns = await loadTranscriptTurns(convId);
+  const signature = `${convId}::${turns.length}::${turns[turns.length - 1]?.preview || ''}`;
+  if (client.lastSentTurnsSignature === signature) return;
+  client.lastSentTurnsSignature = signature;
+
+  try {
+    await client.send('Runtime.evaluate', {
+      expression: `if (typeof window.__agyReceiveFullTurns === 'function') {
+        window.__agyReceiveFullTurns(${JSON.stringify(convId)}, ${JSON.stringify(turns)});
+      }`
+    });
+  } catch {}
+}
+
 class CdpClient {
   constructor(wsUrl, onBinding, onNavigated) {
     this.wsUrl = wsUrl;
@@ -67,6 +119,7 @@ class CdpClient {
     this.pending = new Map();
     this.ws = null;
     this.closed = false;
+    this.lastSentTurnsSignature = '';
   }
 
   async connect() {
@@ -80,8 +133,8 @@ class CdpClient {
           if (msg.error) reject(new Error(msg.error.message || 'CDP Error'));
           else resolve(msg.result);
         } else if (msg.method === 'Runtime.bindingCalled') {
-          if (msg.params?.name === '__agyTimelineSavePrefs') {
-            this.onBinding?.(msg.params.payload);
+          if (msg.params?.name) {
+            this.onBinding?.(msg.params.name, msg.params.payload);
           }
         } else if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameNavigated') {
           this.onNavigated?.();
@@ -158,23 +211,32 @@ async function attachToPage(target, injectScript, savedPrefs) {
     try {
       const wrapped = buildWrappedScript(injectScript, savedPrefs);
       await client?.send('Runtime.addBinding', { name: '__agyTimelineSavePrefs' });
+      await client?.send('Runtime.addBinding', { name: '__agyTimelineRequestTurns' });
       await client?.send('Page.addScriptToEvaluateOnNewDocument', { source: wrapped });
       await client?.send('Runtime.evaluate', { expression: wrapped });
     } catch {}
   };
 
-  client = new CdpClient(target.webSocketDebuggerUrl, async (payload) => {
-    try {
-      const parsed = JSON.parse(payload);
-      await savePrefs(parsed);
-      console.log('[Timeline Engine] Saved updated preferences');
-    } catch {}
+  client = new CdpClient(target.webSocketDebuggerUrl, async (name, payload) => {
+    if (name === '__agyTimelineSavePrefs') {
+      try {
+        const parsed = JSON.parse(payload);
+        await savePrefs(parsed);
+        console.log('[Timeline Engine] Saved updated preferences');
+      } catch {}
+    } else if (name === '__agyTimelineRequestTurns') {
+      try {
+        const convId = payload;
+        await pushTurnsToPage(client, convId);
+      } catch {}
+    }
   }, onReload);
 
   await client.connect();
   await client.send('Page.enable');
   await client.send('Runtime.enable');
   await client.send('Runtime.addBinding', { name: '__agyTimelineSavePrefs' });
+  await client.send('Runtime.addBinding', { name: '__agyTimelineRequestTurns' });
 
   const wrappedScript = buildWrappedScript(injectScript, savedPrefs);
   await client.send('Page.addScriptToEvaluateOnNewDocument', { source: wrappedScript });
@@ -251,16 +313,17 @@ async function tick() {
 
     for (const page of pages) {
       const url = page.webSocketDebuggerUrl;
-      if (!activeSessions.has(url)) {
+      let client = activeSessions.get(url);
+
+      if (!client) {
         try {
-          const client = await attachToPage(page, injectScript, savedPrefs);
+          client = await attachToPage(page, injectScript, savedPrefs);
           activeSessions.set(url, client);
           console.log(`[Timeline Engine] Attached and injected to page: ${page.id}`);
         } catch (err) {
           console.error(`[Timeline Engine] Attach error for ${page.id}:`, err.message);
         }
       } else if (hasScriptChanged) {
-        const client = activeSessions.get(url);
         try {
           const wrapped = buildWrappedScript(injectScript, savedPrefs);
           await client.send('Runtime.evaluate', { expression: wrapped });
@@ -268,6 +331,21 @@ async function tick() {
         } catch (err) {
           console.error(`[Timeline Engine] Hot reload error:`, err.message);
         }
+      }
+
+      // Sync active conversation turns
+      if (client && !client.closed) {
+        try {
+          const res = await client.send('Runtime.evaluate', {
+            expression: 'window.location.pathname'
+          });
+          const pathname = res?.result?.value || '';
+          const match = pathname.match(/\/c\/([a-f0-9\-]+)/);
+          const convId = match ? match[1] : null;
+          if (convId) {
+            await pushTurnsToPage(client, convId);
+          }
+        } catch {}
       }
     }
 
@@ -280,5 +358,5 @@ async function tick() {
 }
 
 console.log('[Timeline Engine] Starting Antigravity Timeline Engine Sidecar...');
-setInterval(tick, 3000);
+setInterval(tick, 1200);
 tick();

@@ -13,11 +13,14 @@ export interface TimelinePreferences {
 export interface TimelineTurnNode {
   index: number;
   userText: string;
+  fullText?: string;
+  stepIndex?: number;
   responseText: string;
   timeStr: string;
-  element: HTMLElement;
+  element: HTMLElement | null;
   topPercent: number;
   isActive: boolean;
+  isFolded?: boolean;
 }
 
 export interface I18nTextMap {

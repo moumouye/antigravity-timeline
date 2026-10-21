@@ -95,6 +95,42 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
+  // 同步全量 transcript 轮次数据至客户端
+  const pathnameRes = await sendCdp('Runtime.evaluate', { expression: 'window.location.pathname', returnByValue: true });
+  const convMatch = (pathnameRes?.result?.value || '').match(/\/c\/([a-f0-9\-]+)/);
+  if (convMatch) {
+    const convId = convMatch[1];
+    const transPath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
+    if (existsSync(transPath)) {
+      const raw = await readFile(transPath, 'utf8');
+      const lines = raw.split(/\r?\n/).filter(Boolean);
+      const turns = [];
+      let turnIdx = 1;
+      for (const line of lines) {
+        try {
+          const item = JSON.parse(line);
+          if (item.type === 'USER_INPUT') {
+            let text = (item.content || '').replace(/<\/?USER_REQUEST>/g, '')
+                                           .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
+                                           .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
+                                           .trim();
+            const lns = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            const preview = lns.slice(0, 2).join(' ') || (`Turn #${turnIdx}`);
+            turns.push({ index: turnIdx++, preview: preview.slice(0, 100), fullText: text, stepIndex: item.step_index });
+          }
+        } catch {}
+      }
+      if (turns.length > 0) {
+        console.log(`成功同步 ${turns.length} 轮底层全量会话至渲染端`);
+        await sendCdp('Runtime.evaluate', {
+          expression: `if (typeof window.__agyReceiveFullTurns === 'function') {
+            window.__agyReceiveFullTurns(${JSON.stringify(convId)}, ${JSON.stringify(turns)});
+          }`
+        });
+      }
+    }
+  }
+
   console.log('\n=== [4/5] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
@@ -152,13 +188,14 @@ async function runE2ETest() {
   console.log('\n=== [5/5] 验证列表中点击条目平滑定位与光晕脉冲 ===');
   const clickCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
-      const firstCard = document.querySelector('.agy-turn-card');
-      if (firstCard) {
-        firstCard.click();
+      const targetCard = document.querySelector('.agy-turn-card:not(.is-folded)') ||
+                         document.querySelector('.agy-turn-card:last-child');
+      if (targetCard) {
+        targetCard.click();
       }
       const highlighted = document.querySelector('.agy-timeline-target-highlight');
       return {
-        cardClicked: !!firstCard,
+        cardClicked: !!targetCard,
         jumpHighlightFired: !!highlighted
       };
     })()`,
