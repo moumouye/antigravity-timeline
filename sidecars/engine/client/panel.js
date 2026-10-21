@@ -17,7 +17,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     try { window.__agyTimelineCleanup(); } catch {}
   }
 
-  // 1. Remove stale injected elements (including the old floating btn)
+  // 1. Remove stale injected elements
   const staleSelectors = [
     '#agy-timeline-styles',
     '#agy-timeline-track',
@@ -25,7 +25,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     '#agy-timeline-floating-btn',
     '#agy-timeline-drawer',
     '#agy-timeline-settings-tab',
-    '#agy-timeline-settings-panel'
+    '#agy-timeline-settings-panel',
+    '#agy-timeline-handle',
+    '#agy-timeline-menu'
   ];
   staleSelectors.forEach(sel => {
     document.querySelectorAll(sel).forEach(el => el.remove());
@@ -61,7 +63,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   /** @type {TimelineTurnNode[]} */
   let currentNodes = [];
   /** @type {number | null} */
-  let hoverTimer = null;
+  let hideTimer = null;
   let isLoadingOlder = false;
 
   // 3. Find Viewport
@@ -158,7 +160,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       }
       const cleanResponse = responseText.length > 45 ? responseText.slice(0, 42) + '...' : responseText;
 
-      // 4. Calculate relative vertical position
       const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
       const topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
 
@@ -176,67 +177,103 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return nodes;
   }
 
-  // 6. Create or Get Track Container
-  function ensureTrackContainer(viewport) {
-    let track = document.getElementById('agy-timeline-track');
-    if (!track) {
-      track = document.createElement('div');
-      track.id = 'agy-timeline-track';
-      const parent = viewport.parentElement || document.body;
-      parent.style.position = 'relative';
-      parent.appendChild(track);
-    }
-    return track;
-  }
+  // 6. Right-edge Middle Handle (Anchor)
+  function ensureHandle() {
+    let handle = document.getElementById('agy-timeline-handle');
+    if (!handle) {
+      handle = document.createElement('div');
+      handle.id = 'agy-timeline-handle';
+      handle.title = t().title;
+      handle.innerHTML = `
+        <div class="agy-handle-bar"></div>
+        <div class="agy-handle-bar"></div>
+      `;
+      document.body.appendChild(handle);
 
-  // 7. Create or Get Hover Popover (Always in Middle Area of Right Side)
-  function ensurePopover(track) {
-    let popover = document.getElementById('agy-timeline-popover');
-    if (!popover) {
-      popover = document.createElement('div');
-      popover.id = 'agy-timeline-popover';
-      track.appendChild(popover);
-
-      popover.addEventListener('mouseenter', () => {
-        if (hoverTimer) clearTimeout(hoverTimer);
+      handle.addEventListener('mouseenter', () => {
+        showMenu();
       });
 
-      popover.addEventListener('mouseleave', () => {
-        hidePopover();
+      handle.addEventListener('mouseleave', () => {
+        scheduleHideMenu();
       });
     }
-    return popover;
+    return handle;
   }
 
-  function showPopover(node) {
-    const track = document.getElementById('agy-timeline-track');
-    if (!track) return;
-    const popover = ensurePopover(track);
+  // 7. Hover Expanded All-Turns Timeline Menu
+  function ensureMenu() {
+    let menu = document.getElementById('agy-timeline-menu');
+    if (!menu) {
+      menu = document.createElement('div');
+      menu.id = 'agy-timeline-menu';
+      document.body.appendChild(menu);
 
-    if (hoverTimer) clearTimeout(hoverTimer);
+      menu.addEventListener('mouseenter', () => {
+        if (hideTimer) clearTimeout(hideTimer);
+      });
 
-    // Strictly matches Image 3: Two rows, concise, truncated
-    popover.innerHTML = `
-      <div class="agy-popover-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
-      <div class="agy-popover-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
+      menu.addEventListener('mouseleave', () => {
+        scheduleHideMenu();
+      });
+    }
+    return menu;
+  }
+
+  function showMenu() {
+    if (hideTimer) clearTimeout(hideTimer);
+    const menu = ensureMenu();
+    const handle = ensureHandle();
+
+    handle.classList.add('is-active');
+    renderMenuList(menu, currentNodes);
+    menu.classList.add('show');
+  }
+
+  function scheduleHideMenu() {
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => {
+      const menu = document.getElementById('agy-timeline-menu');
+      const handle = document.getElementById('agy-timeline-handle');
+      if (menu) menu.classList.remove('show');
+      if (handle) handle.classList.remove('is-active');
+    }, 200);
+  }
+
+  function renderMenuList(menu, nodes) {
+    const txt = t();
+    menu.innerHTML = `
+      <div class="agy-menu-header">
+        <span class="agy-menu-title">
+          <span>⏱️ ${txt.title}</span>
+        </span>
+        <span class="agy-menu-badge">${txt.turnsCount(nodes.length)}</span>
+      </div>
+      <div class="agy-menu-list" id="agy-menu-list"></div>
     `;
 
-    // Position in the middle area of the right side (never clipped by top or bottom headers)
-    popover.classList.add('show');
+    const listEl = menu.querySelector('#agy-menu-list');
+    if (listEl) {
+      if (nodes.length === 0) {
+        listEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
+      } else {
+        nodes.forEach(node => {
+          const card = document.createElement('div');
+          card.className = `agy-turn-card ${node.isActive ? 'is-active' : ''}`;
+          card.innerHTML = `
+            <div class="agy-turn-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
+            <div class="agy-turn-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
+          `;
 
-    popover.onclick = () => {
-      jumpToTurn(node);
-    };
-  }
+          card.addEventListener('click', () => {
+            jumpToTurn(node);
+            scheduleHideMenu();
+          });
 
-  function hidePopover() {
-    if (hoverTimer) clearTimeout(hoverTimer);
-    hoverTimer = window.setTimeout(() => {
-      const popover = document.getElementById('agy-timeline-popover');
-      if (popover) {
-        popover.classList.remove('show');
+          listEl.appendChild(card);
+        });
       }
-    }, 120);
+    }
   }
 
   // 8. Jump to Turn with Smooth Scroll and Pulse Glow
@@ -255,44 +292,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     setTimeout(() => {
       node.element.classList.remove('agy-timeline-target-highlight');
     }, 1500);
-
-    hidePopover();
   }
 
-  // 9. Render Right-edge Markers (Matches Screenshot ==)
-  function renderMarkers(track, nodes) {
-    track.querySelectorAll('.agy-timeline-marker').forEach(el => el.remove());
-
-    nodes.forEach(node => {
-      const marker = document.createElement('div');
-      marker.className = `agy-timeline-marker ${node.isActive ? 'is-active' : ''}`;
-      marker.style.top = `${node.topPercent}%`;
-      marker.title = `${t().turnLabel(node.index)}: ${node.userText}`;
-
-      // Double line bars (Matches Screenshot ==)
-      marker.innerHTML = `
-        <div class="agy-timeline-marker-bar"></div>
-        <div class="agy-timeline-marker-bar"></div>
-      `;
-
-      marker.addEventListener('mouseenter', () => {
-        showPopover(node);
-      });
-
-      marker.addEventListener('mouseleave', () => {
-        hidePopover();
-      });
-
-      marker.addEventListener('click', (e) => {
-        e.stopPropagation();
-        jumpToTurn(node);
-      });
-
-      track.appendChild(marker);
-    });
-  }
-
-  // 10. Smart Scroll Lock (Disable auto-scroll to bottom on send)
+  // 9. Smart Scroll Lock (Disable auto-scroll to bottom on send)
   let lastUserScrollTop = 0;
   let isLockedByPreference = false;
 
@@ -315,9 +317,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         currentNodes.forEach(n => {
           n.isActive = (n === closestNode);
         });
-        const track = document.getElementById('agy-timeline-track');
-        if (track) {
-          renderMarkers(track, currentNodes);
+        const menu = document.getElementById('agy-timeline-menu');
+        if (menu && menu.classList.contains('show')) {
+          renderMenuList(menu, currentNodes);
         }
       }
 
@@ -349,18 +351,21 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, true);
   }
 
-  // 11. Main Update Loop (Zero extra floating button)
+  // 10. Main Update Loop
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
 
     currentNodes = scanTurns();
+    ensureHandle();
 
-    const track = ensureTrackContainer(viewport);
-    renderMarkers(track, currentNodes);
+    const menu = document.getElementById('agy-timeline-menu');
+    if (menu && menu.classList.contains('show')) {
+      renderMenuList(menu, currentNodes);
+    }
   }
 
-  // 12. MutationObserver for dynamic turns & auto-expand
+  // 11. MutationObserver for dynamic turns & auto-expand
   let updateDebounceTimer = null;
   const domObserver = new MutationObserver(() => {
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
@@ -378,7 +383,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   autoExpandCollapsedMessages();
   renderUI();
 
-  // 13. Global Cleanup handler
+  // 12. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     domObserver.disconnect();
     staleSelectors.forEach(sel => {

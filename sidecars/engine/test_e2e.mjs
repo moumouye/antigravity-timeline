@@ -95,20 +95,26 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
-  console.log('\n=== [4/5] 验证 DOM 元素挂载状态 (纯净无药丸按钮) ===');
+  console.log('\n=== [4/5] 验证右侧手柄与悬停全量对话菜单挂载状态 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const styleEl = document.getElementById('agy-timeline-styles');
-      const trackEl = document.getElementById('agy-timeline-track');
+      const handle = document.getElementById('agy-timeline-handle');
       const floatBtn = document.getElementById('agy-timeline-floating-btn');
-      const drawer = document.getElementById('agy-timeline-drawer');
-      const markers = document.querySelectorAll('.agy-timeline-marker');
+      
+      // Simulate hover to open menu
+      if (handle) {
+        handle.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      }
+      const menu = document.getElementById('agy-timeline-menu');
+      const cards = menu ? menu.querySelectorAll('.agy-turn-card') : [];
+      
       return {
         hasStyle: !!styleEl,
-        hasTrack: !!trackEl,
-        hasFloatBtn: !!floatBtn,
-        hasDrawer: !!drawer,
-        markersCount: markers.length
+        hasHandle: !!handle,
+        hasResidualFloatBtn: !!floatBtn,
+        menuVisible: menu?.classList.contains('show'),
+        totalTurnsInMenu: cards.length
       };
     })()`,
     returnByValue: true
@@ -116,33 +122,32 @@ async function runE2ETest() {
 
   const domRes = domCheck?.result?.value;
   console.log('DOM 挂载与校验结果:', JSON.stringify(domRes, null, 2));
-  if (!domRes?.hasStyle || !domRes?.hasTrack) {
-    throw new Error('时间线基础 DOM 挂载失败');
+  if (!domRes?.hasStyle || !domRes?.hasHandle) {
+    throw new Error('时间线导航基础手柄挂载失败');
   }
-  if (domRes?.hasFloatBtn) {
-    throw new Error('图 1 药丸浮动按钮未被彻底清理');
+  if (domRes?.hasResidualFloatBtn) {
+    throw new Error('检测到残留的浮动按钮');
+  }
+  if (!domRes?.menuVisible || domRes?.totalTurnsInMenu === 0) {
+    throw new Error('悬停时未成功展开对话轮次列表菜单');
   }
 
-  console.log('\n=== [5/5] 验证悬停预览卡片位置 (右侧垂直居中区域) ===');
-  const popoverCheck = await sendCdp('Runtime.evaluate', {
+  console.log('\n=== [5/5] 验证列表中点击条目平滑定位与光晕脉冲 ===');
+  const clickCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
-      const marker = document.querySelector('.agy-timeline-marker');
-      if (marker) {
-        marker.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      const firstCard = document.querySelector('.agy-turn-card');
+      if (firstCard) {
+        firstCard.click();
       }
-      const popover = document.getElementById('agy-timeline-popover');
-      const rect = popover ? popover.getBoundingClientRect() : null;
+      const highlighted = document.querySelector('.agy-timeline-target-highlight');
       return {
-        popoverVisible: popover?.classList.contains('show'),
-        top: rect?.top,
-        right: window.innerWidth - (rect?.right || 0),
-        prompt: popover?.querySelector('.agy-popover-prompt')?.textContent,
-        response: popover?.querySelector('.agy-popover-response')?.textContent
+        cardClicked: !!firstCard,
+        jumpHighlightFired: !!highlighted
       };
     })()`,
     returnByValue: true
   });
-  console.log('悬停卡片定位与结构结果:', JSON.stringify(popoverCheck?.result?.value, null, 2));
+  console.log('条目点击定位触发结果:', JSON.stringify(clickCheck?.result?.value, null, 2));
 
   ws.close();
   console.log('\n[SUCCESS] 端到端自动化测试全部顺利通过！');

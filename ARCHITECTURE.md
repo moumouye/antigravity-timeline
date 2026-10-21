@@ -1,6 +1,6 @@
 # 系统架构与实现原理 (System Architecture)
 
-本项目为 Antigravity 桌面客户端提供非侵入式、极简纯粹的对话时间线导航与智能视口控制能力。无需解包客户端二进制或修改 `app.asar`，利用 Antigravity 原生 Sidecar 运行机制与 Chrome DevTools Protocol (CDP) 调试桥接，实现全量历史折叠消息自动感知展开、右侧边缘时间线刻度映射、悬停两行极简预览卡片、毫秒级平滑定位、智能视口防滚屏锁定与免重启热重载。
+本项目为 Antigravity 桌面客户端提供非侵入式、极简纯粹的对话时间线导航与智能视口控制能力。无需解包客户端二进制或修改 `app.asar`，利用 Antigravity 原生 Sidecar 运行机制与 Chrome DevTools Protocol (CDP) 调试桥接，实现右侧中间手柄悬停展开全量对话、条目点击平滑定位、智能视口防滚屏锁定与免重启热重载。
 
 ---
 
@@ -30,10 +30,8 @@ flowchart TB
 
     subgraph Injected ["🎨 渲染注入层 (Page Context)"]
         AutoExpand["折叠历史自动平滑展开器 (Load older messages)"]
-        Track["右侧边缘导轨 (#agy-timeline-track)"]
-        Markers["双线刻度标记 (.agy-timeline-marker)"]
-        Popover["两行纯净提问预览卡片 (#agy-timeline-popover)"]
-        FloatBtn["右下角极简胶囊药丸 (#agy-timeline-floating-btn)"]
+        Handle["右侧侧边中间手柄 (#agy-timeline-handle)"]
+        Menu["悬停展开全量对话菜单 (#agy-timeline-menu)"]
         ScrollController["智能视口锁定与 Scrollspy 监听"]
         Binding["__agyTimelineSavePrefs() RPC 绑定"]
     end
@@ -51,10 +49,9 @@ flowchart TB
     Main -->|运行时 CDP 动态评估注入| CDP
 
     Renderer --> AutoExpand
-    AutoExpand --> Track
-    Track --> Markers
-    Markers --> Popover
-    Renderer --> FloatBtn
+    AutoExpand --> Handle
+    Handle -->|鼠标悬停| Menu
+    Menu -->|点击轮次条目| Renderer
     Renderer --> ScrollController
     ScrollController -->|偏好回传| Binding
     Binding -->|CDP 事件回传| Main
@@ -64,21 +61,17 @@ flowchart TB
 
 ---
 
-## 2. 解决 Antigravity 自动折叠历史交互的核心机制
+## 2. 右侧居中手柄与全量对话展开机制
 
-Antigravity 宿主为了前端渲染性能，默认仅在 DOM 中挂载最近的 2~3 轮对话，更早的全部交互均隐藏在顶部的 `Load older messages` 按钮后。本项目通过**静默平滑展开**策略攻克该缺陷：
-1. **自动探测**：初始化及动态变动时，实时检测 DOM 顶层是否存在加载更早历史的入口；
-2. **平滑展开**：自动模拟触发该操作，同时实时锁死并计算 `scrollTop` 补偿高度差，杜绝画面抖动；
-3. **全量映射**：将所有被隐藏的真实轮次（如 7 轮、20 轮、50 轮）全部恢复映射到右侧滚动条时间轴上，计算真实的相对高度百分比；
-4. **轻量呈现**：右下角胶囊展示真实统计（例如 `🟢 共 7 轮交互`）。
+1. **统一锚定至右侧中间区域**：时间线交互入口采用吸附手柄形式固定在视口右侧侧边垂直中间位置（`top: 50%; transform: translateY(-50%)`），避免分散割裂；
+2. **悬停触发全量对话列表**：鼠标移入右侧中间手柄，自动向左平滑展开包含全部轮次的导航菜单（`#agy-timeline-menu`），卡片包含单行截断的提问标题与模型回复胶囊；
+3. **条目点击毫秒级跳转**：用户在列表中点击任意一轮卡片，主视口通过原生 `scrollIntoView({ behavior: 'smooth', block: 'center' })` 定位至对应位置，并触发目标消息 1.4 秒专属柔和光晕脉冲；
+4. **历史折叠消息平滑预载**：启动时检测并平滑展开被宿主折叠的历史交互，保证长对话的所有轮次完整列出。
 
 ---
 
-## 3. 极简 UI 设计原则 (Minimalist Pure Design)
+## 3. 关键设计原则与隔离规范
 
-- **无多余设置弹窗干扰**：彻底移除宿主设置弹窗内的冗余控制注入，保持界面与宿主一致的极简纯粹。
-- **右侧极简双绿线刻度 (==)**：在长文边缘映射交互点，当前视口位置高亮呈现。
-- **两行纯净悬停气泡 (Popover)**：
-  - **第 1 行**：提问要点正文（单行截断省略号）；
-  - **第 2 行**：浅绿背景胶囊条（模型回答摘要单行截断）；
-  - 杜绝多层冗余与杂乱重叠。
+1. **非侵入原则**：完全依托 Antigravity 官方 Sidecar 架构与 CDP 调试协议，不修改客户端二进制或 ASAR 归档。
+2. **文本截断与紧凑排版**：提问标题超出 48 字符自动截断附加 `...`；回答摘要超出 42 字符单行截断，保证列表卡片美观规整。
+3. **零外部依赖**：管理脚本 [`manage.py`](manage.py) 完全基于 Python 3 标准库构建，无需 pip 安装任何三方库；卸载时提供纯净 5 步清理，确保系统零残留。
