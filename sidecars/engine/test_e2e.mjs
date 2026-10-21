@@ -95,26 +95,37 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
-  console.log('\n=== [4/5] 验证右侧手柄与悬停全量对话菜单挂载状态 ===');
+  console.log('\n=== [4/5] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const styleEl = document.getElementById('agy-timeline-styles');
       const handle = document.getElementById('agy-timeline-handle');
       const floatBtn = document.getElementById('agy-timeline-floating-btn');
       
+      const viewport = document.querySelector('[data-testid="autoscroll-viewport"]') ||
+                       document.querySelector('.isolate.overflow-y-auto') ||
+                       document.querySelector('.overflow-y-auto.min-h-0.w-full');
+      const scrollBefore = viewport ? viewport.scrollTop : 0;
+      
       // Simulate hover to open menu
       if (handle) {
         handle.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       }
+      const scrollAfter = viewport ? viewport.scrollTop : 0;
       const menu = document.getElementById('agy-timeline-menu');
+      const list = document.getElementById('agy-menu-list');
       const cards = menu ? menu.querySelectorAll('.agy-turn-card') : [];
+      const activeCard = menu ? menu.querySelector('.agy-turn-card.is-active') : null;
       
       return {
         hasStyle: !!styleEl,
         hasHandle: !!handle,
         hasResidualFloatBtn: !!floatBtn,
         menuVisible: menu?.classList.contains('show'),
-        totalTurnsInMenu: cards.length
+        totalTurnsInMenu: cards.length,
+        hasActiveCard: !!activeCard,
+        viewportScrollDelta: Math.abs(scrollAfter - scrollBefore),
+        hasSignature: !!menu?.dataset.renderedSignature
       };
     })()`,
     returnByValue: true
@@ -130,6 +141,12 @@ async function runE2ETest() {
   }
   if (!domRes?.menuVisible || domRes?.totalTurnsInMenu === 0) {
     throw new Error('悬停时未成功展开对话轮次列表菜单');
+  }
+  if (domRes?.viewportScrollDelta !== 0) {
+    throw new Error(`悬停导致主视口产生非预期位移 (${domRes?.viewportScrollDelta}px)`);
+  }
+  if (!domRes?.hasSignature) {
+    throw new Error('菜单未正确挂载会话内容特征签名');
   }
 
   console.log('\n=== [5/5] 验证列表中点击条目平滑定位与光晕脉冲 ===');

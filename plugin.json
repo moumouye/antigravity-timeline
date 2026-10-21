@@ -2,6 +2,6 @@
   "name": "antigravity-timeline",
   "display_name": "Timeline Navigator",
   "description": "Right-edge conversation timeline handle, hover expanded all-turns menu, fast jumping, smart scroll lock, and jump highlight pulse for Antigravity.",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "logo": "assets/logo.svg"
 }

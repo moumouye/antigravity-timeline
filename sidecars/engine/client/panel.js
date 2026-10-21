@@ -66,6 +66,20 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let hideTimer = null;
   let isHoveringMenuOrHandle = false;
 
+  // Session & Signature tracking to completely eliminate stale cache
+  function getCurrentSessionKey() {
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  }
+  let currentSessionKey = getCurrentSessionKey();
+
+  /**
+   * @param {TimelineTurnNode[]} nodes
+   */
+  function computeNodesSignature(nodes) {
+    if (!nodes || nodes.length === 0) return `${currentSessionKey}::empty`;
+    return `${currentSessionKey}::${nodes.length}::` + nodes.map(n => `${n.index}:${n.userText}`).join('|');
+  }
+
   // 3. Find Viewport
   function getViewport() {
     return /** @type {HTMLElement | null} */ (
@@ -75,37 +89,12 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
-  // 4. Safe Full History Auto-Expansion (Zero scrollTop tampering)
+  // 4. Locate "Load Older Messages" button (manual on-demand only)
   function findLoadOlderBtn() {
     return Array.from(document.querySelectorAll('button')).find(b => {
       const text = (b.textContent || '').trim().toLowerCase();
       return (text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史')) && !b.disabled;
     }) || null;
-  }
-
-  let isAutoExpanding = false;
-  async function expandAllHistorySilently() {
-    if (isAutoExpanding) return;
-    isAutoExpanding = true;
-
-    try {
-      let loops = 0;
-      let loadBtn = findLoadOlderBtn();
-      while (loadBtn && !loadBtn.disabled && loops < 15) {
-        loops++;
-        loadBtn.click();
-        await new Promise(r => setTimeout(r, 180));
-        loadBtn = findLoadOlderBtn();
-      }
-    } catch {}
-
-    isAutoExpanding = false;
-    currentNodes = scanTurns();
-    ensureHandle();
-    const menu = document.getElementById('agy-timeline-menu');
-    if (menu && menu.classList.contains('show')) {
-      renderMenuList(menu, currentNodes);
-    }
   }
 
   // 5. Scan All Conversation Turns Accurately
@@ -127,7 +116,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
       const fullText = (quotable.textContent || '').trim();
       const firstLines = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
-      const cleanPrompt = firstLines.length > 70 ? firstLines.slice(0, 68) + '...' : firstLines;
+      const cleanPrompt = firstLines.length > 120 ? firstLines.slice(0, 118) + '...' : firstLines;
 
       // 2. Extract Timestamp
       let timeStr = '';
@@ -151,7 +140,50 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return nodes;
   }
 
-  // 6. Right-edge Middle Handle (Anchor)
+  // 6. Viewport Active Node Computation
+  /**
+   * @param {TimelineTurnNode[]} nodes
+   * @param {HTMLElement | null} viewport
+   */
+  function updateActiveNode(nodes, viewport) {
+    if (!nodes || nodes.length === 0) return;
+    if (!viewport) {
+      nodes.forEach((n, idx) => {
+        n.isActive = (idx === nodes.length - 1);
+      });
+      return;
+    }
+
+    const isAtBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
+    if (isAtBottom) {
+      nodes.forEach((n, idx) => {
+        n.isActive = (idx === nodes.length - 1);
+      });
+      return;
+    }
+
+    const vpRect = viewport.getBoundingClientRect();
+    const viewAnchor = vpRect.top + 60;
+    let closestNode = nodes[0];
+    let minDiff = Infinity;
+
+    nodes.forEach(node => {
+      if (!node.element) return;
+      const turnContainer = node.element.closest('[class*="scroll-mt"]') || node.element;
+      const rect = turnContainer.getBoundingClientRect();
+      const diff = Math.abs(rect.top - viewAnchor);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestNode = node;
+      }
+    });
+
+    nodes.forEach(n => {
+      n.isActive = (n === closestNode);
+    });
+  }
+
+  // 7. Right-edge Middle Handle (Anchor)
   function ensureHandle() {
     let handle = document.getElementById('agy-timeline-handle');
     if (!handle) {
@@ -188,7 +220,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return handle;
   }
 
-  // 7. Hover Expanded All-Turns Timeline Menu
+  // 8. Hover Expanded All-Turns Timeline Menu
   function ensureMenu() {
     let menu = document.getElementById('agy-timeline-menu');
     if (!menu) {
@@ -223,15 +255,25 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (hideTimer) clearTimeout(hideTimer);
     const menu = ensureMenu();
     const handle = ensureHandle();
+    const viewport = getViewport();
 
-    if (findLoadOlderBtn()) {
-      expandAllHistorySilently();
+    // Check SPA session switch
+    const newSessionKey = getCurrentSessionKey();
+    if (newSessionKey !== currentSessionKey) {
+      currentSessionKey = newSessionKey;
+      currentNodes = [];
+      delete menu.dataset.renderedSignature;
     }
 
     currentNodes = scanTurns();
+    updateActiveNode(currentNodes, viewport);
+
     handle.classList.add('is-active');
     renderMenuList(menu, currentNodes);
     menu.classList.add('show');
+
+    // Automatically locate active turn / scroll to bottom so the latest turn is immediately visible
+    scrollMenuToActiveTurn(menu, viewport);
   }
 
   function scheduleHideMenu() {
@@ -247,19 +289,46 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   /**
-   * Render menu list safely (Pure prompt only, no response rows)
+   * Scroll menu list to active card or to bottom (latest turn)
+   * @param {HTMLElement} menu
+   * @param {HTMLElement | null} viewport
+   */
+  function scrollMenuToActiveTurn(menu, viewport) {
+    const listEl = menu.querySelector('#agy-menu-list');
+    if (!listEl) return;
+
+    const performScroll = () => {
+      const isAtBottom = !viewport || (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
+      const activeCard = listEl.querySelector('.agy-turn-card.is-active');
+
+      if (isAtBottom || !activeCard) {
+        listEl.scrollTop = listEl.scrollHeight;
+      } else {
+        activeCard.scrollIntoView({ block: 'center', behavior: 'instant' });
+      }
+    };
+
+    performScroll();
+    requestAnimationFrame(performScroll);
+  }
+
+  /**
+   * Render menu list safely with signature verification (Pure prompt only, no response rows)
    * @param {HTMLElement} menu
    * @param {TimelineTurnNode[]} nodes
    */
   function renderMenuList(menu, nodes) {
     const listEl = menu.querySelector('#agy-menu-list');
+    const newSig = computeNodesSignature(nodes);
+    const prevSig = menu.dataset.renderedSignature;
 
-    // If already rendered with exact same count, avoid destroying innerHTML
-    if (listEl && listEl.children.length === nodes.length && nodes.length > 0) {
+    // If already rendered with exact same signature, avoid destroying innerHTML
+    if (listEl && prevSig === newSig) {
       updateActiveCardClasses(menu, nodes);
       return;
     }
 
+    menu.dataset.renderedSignature = newSig;
     const txt = t();
     menu.innerHTML = `
       <div class="agy-menu-header">
@@ -276,6 +345,26 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (nodes.length === 0) {
         newListEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
       } else {
+        // If there are unexpanded older messages in the host, provide an explicit top button
+        const olderBtn = findLoadOlderBtn();
+        if (olderBtn && !olderBtn.disabled) {
+          const loadCard = document.createElement('div');
+          loadCard.className = 'agy-timeline-load-btn';
+          loadCard.innerHTML = `<span>📜 ${txt.loadOlder || '加载更早对话历史'}</span>`;
+          loadCard.addEventListener('click', (e) => {
+            e.stopPropagation();
+            loadCard.innerHTML = `<span>⏳ 加载中...</span>`;
+            olderBtn.click();
+            setTimeout(() => {
+              currentNodes = scanTurns();
+              updateActiveNode(currentNodes, getViewport());
+              delete menu.dataset.renderedSignature;
+              renderMenuList(menu, currentNodes);
+            }, 350);
+          });
+          newListEl.appendChild(loadCard);
+        }
+
         nodes.forEach(node => {
           const card = document.createElement('div');
           card.className = `agy-turn-card ${node.isActive ? 'is-active' : ''}`;
@@ -311,7 +400,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 8. Single-Shot Precision Jump with Immediate User Interruption
+  // 9. Single-Shot Precision Jump with Immediate User Interruption
   let activeScrollTimer = null;
 
   function cancelScrollAnimation() {
@@ -353,13 +442,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const viewport = getViewport();
     if (!viewport) return;
 
-    // If node element is missing or not connected, or if history is still folded, expand fully first
-    if (!node.element || !node.element.isConnected || findLoadOlderBtn()) {
-      await expandAllHistorySilently();
+    if (!node.element || !node.element.isConnected) {
       const freshNodes = scanTurns();
       const matched = freshNodes.find(n => n.index === node.index) ||
-                      freshNodes.find(n => n.userText === node.userText) ||
-                      freshNodes[node.index - 1];
+                      freshNodes.find(n => n.userText === node.userText);
       if (matched && matched.element) {
         node = matched;
       }
@@ -391,9 +477,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 1500);
   }
 
-  // 9. Passive Viewport Tracking (Zero interference with manual user scroll)
+  // 10. Passive Viewport Tracking (Zero interference with manual user scroll)
+  /** @type {HTMLElement | null} */
+  let trackedViewport = null;
+
   function setupScrollController(viewport) {
-    // Instantly abort any programmatic animation on direct manual user interaction
+    if (trackedViewport === viewport) return;
+    trackedViewport = viewport;
+
     const onUserInteraction = () => cancelScrollAnimation();
     viewport.addEventListener('wheel', onUserInteraction, { passive: true });
     viewport.addEventListener('touchstart', onUserInteraction, { passive: true });
@@ -406,41 +497,32 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     viewport.addEventListener('scroll', () => {
       if (currentNodes.length === 0) return;
-      const vpRect = viewport.getBoundingClientRect();
-      const viewAnchor = vpRect.top + 60;
-
-      let closestNode = null;
-      let minDiff = Infinity;
-
-      currentNodes.forEach(node => {
-        if (!node.element) return;
-        const turnContainer = node.element.closest('[class*="scroll-mt"]') || node.element;
-        const rect = turnContainer.getBoundingClientRect();
-        const diff = Math.abs(rect.top - viewAnchor);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestNode = node;
-        }
-      });
-
-      if (closestNode) {
-        currentNodes.forEach(n => {
-          n.isActive = (n === closestNode);
-        });
-        const menu = document.getElementById('agy-timeline-menu');
-        if (menu && menu.classList.contains('show')) {
-          updateActiveCardClasses(menu, currentNodes);
-        }
+      updateActiveNode(currentNodes, viewport);
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu && menu.classList.contains('show')) {
+        updateActiveCardClasses(menu, currentNodes);
       }
     }, { passive: true });
   }
 
-  // 10. Main Update Loop (Safe and stable)
+  // 11. Main Update Loop (Safe and stable)
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
 
+    setupScrollController(viewport);
+
+    // Session detection
+    const newSessionKey = getCurrentSessionKey();
+    if (newSessionKey !== currentSessionKey) {
+      currentSessionKey = newSessionKey;
+      currentNodes = [];
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu) delete menu.dataset.renderedSignature;
+    }
+
     currentNodes = scanTurns();
+    updateActiveNode(currentNodes, viewport);
     ensureHandle();
 
     const menu = document.getElementById('agy-timeline-menu');
@@ -449,7 +531,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
   }
 
-  // 11. Scoped MutationObserver (Passive structure tracker)
+  // 12. Scoped MutationObserver (Passive structure tracker)
   let updateDebounceTimer = null;
   const initialViewport = getViewport();
 
@@ -467,11 +549,20 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     domObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  expandAllHistorySilently();
+  window.addEventListener('popstate', () => {
+    currentNodes = [];
+    renderUI();
+  });
+  window.addEventListener('hashchange', () => {
+    currentNodes = [];
+    renderUI();
+  });
+
   renderUI();
 
-  // 12. Global Cleanup handler
+  // 13. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
+    cancelScrollAnimation();
     domObserver.disconnect();
     staleSelectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => el.remove());
