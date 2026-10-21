@@ -95,7 +95,7 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
-  console.log('\n=== [4/5] 验证 DOM 元素挂载与样式表生效状态 ===');
+  console.log('\n=== [4/5] 验证 DOM 元素挂载状态 (纯净无药丸按钮) ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const styleEl = document.getElementById('agy-timeline-styles');
@@ -108,8 +108,7 @@ async function runE2ETest() {
         hasTrack: !!trackEl,
         hasFloatBtn: !!floatBtn,
         hasDrawer: !!drawer,
-        markersCount: markers.length,
-        styleRulesCount: styleEl?.sheet?.cssRules?.length || 0
+        markersCount: markers.length
       };
     })()`,
     returnByValue: true
@@ -120,23 +119,30 @@ async function runE2ETest() {
   if (!domRes?.hasStyle || !domRes?.hasTrack) {
     throw new Error('时间线基础 DOM 挂载失败');
   }
+  if (domRes?.hasFloatBtn) {
+    throw new Error('图 1 药丸浮动按钮未被彻底清理');
+  }
 
-  console.log('\n=== [5/5] 验证时间线定位与光晕脉冲动画机制 ===');
-  const animCheck = await sendCdp('Runtime.evaluate', {
+  console.log('\n=== [5/5] 验证悬停预览卡片位置 (右侧垂直居中区域) ===');
+  const popoverCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const marker = document.querySelector('.agy-timeline-marker');
       if (marker) {
-        marker.click();
+        marker.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       }
-      const target = document.querySelector('.agy-timeline-target-highlight');
+      const popover = document.getElementById('agy-timeline-popover');
+      const rect = popover ? popover.getBoundingClientRect() : null;
       return {
-        markerClicked: !!marker,
-        highlightTriggered: !!target
+        popoverVisible: popover?.classList.contains('show'),
+        top: rect?.top,
+        right: window.innerWidth - (rect?.right || 0),
+        prompt: popover?.querySelector('.agy-popover-prompt')?.textContent,
+        response: popover?.querySelector('.agy-popover-response')?.textContent
       };
     })()`,
     returnByValue: true
   });
-  console.log('动画与定位触发结果:', JSON.stringify(animCheck?.result?.value, null, 2));
+  console.log('悬停卡片定位与结构结果:', JSON.stringify(popoverCheck?.result?.value, null, 2));
 
   ws.close();
   console.log('\n[SUCCESS] 端到端自动化测试全部顺利通过！');

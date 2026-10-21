@@ -50,7 +50,7 @@
 }
 
 .agy-timeline-marker:hover {
-  transform: translateY(-50%) scale(1.15);
+  transform: translateY(-50%) scale(1.18);
 }
 
 .agy-timeline-marker-bar {
@@ -74,24 +74,25 @@
   filter: drop-shadow(0 0 6px var(--agy-timeline-accent));
 }
 
-/* 3. Hover Preview Popover Card (Matches Image 3 Exactly) */
+/* 3. Hover Preview Popover Card (Located in Right-edge Middle Area, Never Clipped) */
 #agy-timeline-popover {
-  position: absolute;
-  right: 22px;
-  width: 290px;
-  max-width: 320px;
-  padding: 10px 14px;
+  position: fixed;
+  right: 26px;
+  top: 48%;
+  transform: translateY(-50%) translateX(8px);
+  width: 300px;
+  max-width: 340px;
+  padding: 11px 14px;
   border-radius: 14px;
   background-color: var(--agy-timeline-bg);
   color: var(--agy-timeline-fg);
   border: 1px solid var(--agy-timeline-border);
-  box-shadow: 0 10px 25px -4px rgba(0, 0, 0, 0.15), 0 4px 10px -2px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.2), 0 4px 10px -2px rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(16px);
-  z-index: 50;
+  z-index: 100;
   pointer-events: auto;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-50%) translateX(6px);
   transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.16s;
   cursor: pointer;
   display: flex;
@@ -130,44 +131,7 @@
   white-space: nowrap;
 }
 
-/* 4. Global Floating Action Pill (Matches User Image 2 Bottom-right Pill) */
-#agy-timeline-floating-btn {
-  position: absolute;
-  right: 18px;
-  bottom: 84px;
-  z-index: 45;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 9999px;
-  background-color: var(--agy-timeline-bg);
-  color: var(--agy-timeline-fg);
-  border: 1px solid var(--agy-timeline-border);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
-  backdrop-filter: blur(12px);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-#agy-timeline-floating-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-  border-color: var(--agy-timeline-accent);
-}
-
-#agy-timeline-floating-btn .agy-timeline-indicator {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background-color: var(--agy-timeline-accent);
-  box-shadow: 0 0 6px var(--agy-timeline-accent);
-}
-
-/* 5. Click Target Jump Highlight Pulse Animation */
+/* 4. Click Target Jump Highlight Pulse Animation */
 @keyframes agy-timeline-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65);

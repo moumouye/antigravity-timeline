@@ -17,7 +17,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     try { window.__agyTimelineCleanup(); } catch {}
   }
 
-  // 1. Remove stale injected elements
+  // 1. Remove stale injected elements (including the old floating btn)
   const staleSelectors = [
     '#agy-timeline-styles',
     '#agy-timeline-track',
@@ -80,7 +80,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const viewport = getViewport();
     if (!viewport) return;
 
-    // Find the hidden/sr-only "Load older messages" button
     const loadBtn = Array.from(document.querySelectorAll('button')).find(b => {
       const text = (b.textContent || '').trim().toLowerCase();
       return text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史');
@@ -93,7 +92,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
       loadBtn.click();
 
-      // Maintain scroll position to avoid jump, then scan next batch
       setTimeout(() => {
         const heightDiff = viewport.scrollHeight - prevScrollHeight;
         if (heightDiff > 0 && prevScrollTop > 50) {
@@ -102,7 +100,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         isLoadingOlder = false;
         renderUI();
 
-        // Recursively expand if more older messages exist
         const hasMore = Array.from(document.querySelectorAll('button')).some(b =>
           (b.textContent || '').toLowerCase().includes('load older messages')
         );
@@ -121,7 +118,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const viewport = getViewport();
     if (!viewport) return [];
 
-    // Query all user question cards across conversation
     const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
     const scrollHeight = Math.max(viewport.scrollHeight, 1);
 
@@ -148,7 +144,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const turnContainer = turnWrapper.parentElement || card.parentElement;
       let responseText = '';
       if (turnContainer) {
-        // Find markdown paragraphs in agent answer
         const pList = turnContainer.querySelectorAll('p, .markdown p, [class*="prose"] p');
         for (const p of Array.from(pList)) {
           const t = (p.textContent || '').replace(/\s+/g, ' ').trim();
@@ -194,7 +189,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return track;
   }
 
-  // 7. Create or Get Hover Popover (Strictly matches Image 3)
+  // 7. Create or Get Hover Popover (Always in Middle Area of Right Side)
   function ensurePopover(track) {
     let popover = document.getElementById('agy-timeline-popover');
     if (!popover) {
@@ -220,13 +215,13 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     if (hoverTimer) clearTimeout(hoverTimer);
 
-    // Image 3 layout: Row 1 = Prompt (truncated), Row 2 = Response Capsule (green, truncated)
+    // Strictly matches Image 3: Two rows, concise, truncated
     popover.innerHTML = `
       <div class="agy-popover-prompt" title="${escapeHtml(node.userText)}">${escapeHtml(node.userText)}</div>
       <div class="agy-popover-response" title="${escapeHtml(node.responseText)}">${escapeHtml(node.responseText)}</div>
     `;
 
-    popover.style.top = `${node.topPercent}%`;
+    // Position in the middle area of the right side (never clipped by top or bottom headers)
     popover.classList.add('show');
 
     popover.onclick = () => {
@@ -297,33 +292,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 10. Clean Floating Action Pill (Matches Image 2 Right-bottom Pill)
-  function ensureFloatingBtn(viewport) {
-    let btn = document.getElementById('agy-timeline-floating-btn');
-    if (!btn) {
-      btn = document.createElement('div');
-      btn.id = 'agy-timeline-floating-btn';
-      const parent = viewport.parentElement || document.body;
-      parent.appendChild(btn);
-
-      btn.addEventListener('click', () => {
-        // Clicking floating pill scrolls smoothly to newest turn or tops
-        if (currentNodes.length > 0) {
-          const last = currentNodes[currentNodes.length - 1];
-          jumpToTurn(last);
-        }
-      });
-    }
-
-    const count = currentNodes.length;
-    btn.innerHTML = `
-      <span class="agy-timeline-indicator"></span>
-      <span>${t().turnsCount(count)}</span>
-    `;
-    return btn;
-  }
-
-  // 11. Smart Scroll Lock (Disable auto-scroll to bottom on send)
+  // 10. Smart Scroll Lock (Disable auto-scroll to bottom on send)
   let lastUserScrollTop = 0;
   let isLockedByPreference = false;
 
@@ -380,7 +349,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, true);
   }
 
-  // 12. Main Update Loop
+  // 11. Main Update Loop (Zero extra floating button)
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
@@ -389,10 +358,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     const track = ensureTrackContainer(viewport);
     renderMarkers(track, currentNodes);
-    ensureFloatingBtn(viewport);
   }
 
-  // 13. MutationObserver for dynamic turns & auto-expand
+  // 12. MutationObserver for dynamic turns & auto-expand
   let updateDebounceTimer = null;
   const domObserver = new MutationObserver(() => {
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
@@ -410,7 +378,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   autoExpandCollapsedMessages();
   renderUI();
 
-  // 14. Global Cleanup handler
+  // 13. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     domObserver.disconnect();
     staleSelectors.forEach(sel => {
