@@ -538,13 +538,30 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (promptEl) promptEl.textContent = `⏳ 正在展开并定位第 ${node.index} 轮...`;
     }
 
+    const waitForDomMutation = (timeoutMs = 180) => {
+      return new Promise(resolve => {
+        let timer = null;
+        const observer = new MutationObserver(() => {
+          if (timer) clearTimeout(timer);
+          observer.disconnect();
+          resolve(true);
+        });
+        const vp = getViewport() || document.body;
+        observer.observe(vp, { childList: true, subtree: true });
+        timer = setTimeout(() => {
+          observer.disconnect();
+          resolve(false);
+        }, timeoutMs);
+      });
+    };
+
     let attempts = 0;
     while (attempts < 8) {
       attempts++;
       const loadBtn = findLoadOlderBtn();
       if (!loadBtn || loadBtn.disabled) break;
       loadBtn.click();
-      await new Promise(r => setTimeout(r, 260));
+      await waitForDomMutation(180);
 
       currentNodes = scanTurns();
       const updatedNode = currentNodes.find(n => n.index === node.index);
