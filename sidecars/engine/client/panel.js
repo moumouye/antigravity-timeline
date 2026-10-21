@@ -75,7 +75,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
-  // 4. Safe History Expansion Controls
+  // 4. Safe Full History Auto-Expansion (Zero scrollTop tampering)
   function findLoadOlderBtn() {
     return Array.from(document.querySelectorAll('button')).find(b => {
       const text = (b.textContent || '').trim().toLowerCase();
@@ -83,10 +83,28 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }) || null;
   }
 
-  function safelyExpandHistoryOnce() {
-    const loadBtn = findLoadOlderBtn();
-    if (loadBtn) {
-      loadBtn.click();
+  let isAutoExpanding = false;
+  async function expandAllHistorySilently() {
+    if (isAutoExpanding) return;
+    isAutoExpanding = true;
+
+    try {
+      let loops = 0;
+      let loadBtn = findLoadOlderBtn();
+      while (loadBtn && !loadBtn.disabled && loops < 15) {
+        loops++;
+        loadBtn.click();
+        await new Promise(r => setTimeout(r, 180));
+        loadBtn = findLoadOlderBtn();
+      }
+    } catch {}
+
+    isAutoExpanding = false;
+    currentNodes = scanTurns();
+    ensureHandle();
+    const menu = document.getElementById('agy-timeline-menu');
+    if (menu && menu.classList.contains('show')) {
+      renderMenuList(menu, currentNodes);
     }
   }
 
@@ -206,6 +224,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const menu = ensureMenu();
     const handle = ensureHandle();
 
+    if (findLoadOlderBtn()) {
+      expandAllHistorySilently();
+    }
+
     currentNodes = scanTurns();
     handle.classList.add('is-active');
     renderMenuList(menu, currentNodes);
@@ -231,11 +253,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
    */
   function renderMenuList(menu, nodes) {
     const listEl = menu.querySelector('#agy-menu-list');
-    const olderBtn = findLoadOlderBtn();
-    const expectedCardCount = nodes.length + (olderBtn ? 1 : 0);
 
     // If already rendered with exact same count, avoid destroying innerHTML
-    if (listEl && listEl.children.length === expectedCardCount && nodes.length > 0) {
+    if (listEl && listEl.children.length === nodes.length && nodes.length > 0) {
       updateActiveCardClasses(menu, nodes);
       return;
     }
@@ -253,24 +273,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     const newListEl = menu.querySelector('#agy-menu-list');
     if (newListEl) {
-      if (olderBtn) {
-        const loadMoreEl = document.createElement('div');
-        loadMoreEl.className = 'agy-timeline-load-btn';
-        loadMoreEl.innerHTML = `<span>⬆️ ${txt.loadOlder || '加载更早对话历史'}</span>`;
-        loadMoreEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          olderBtn.click();
-          loadMoreEl.innerHTML = `<span>⏳ 加载中...</span>`;
-          setTimeout(() => {
-            currentNodes = scanTurns();
-            renderMenuList(menu, currentNodes);
-          }, 350);
-        });
-        newListEl.appendChild(loadMoreEl);
-      }
-
       if (nodes.length === 0) {
-        newListEl.innerHTML += `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
+        newListEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
       } else {
         nodes.forEach(node => {
           const card = document.createElement('div');
@@ -307,15 +311,58 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 8. Jump to Turn with Smooth Native Scroll and Pulse Glow (Zero interference)
+  // 8. Single-Shot Precision Jump with Easing (Bypasses sticky top-0 traps)
+  let activeScrollTimer = null;
+
+  function smoothScrollTo(viewport, targetTop, duration = 260) {
+    if (activeScrollTimer) {
+      clearInterval(activeScrollTimer);
+      activeScrollTimer = null;
+    }
+
+    const startTop = viewport.scrollTop;
+    const distance = targetTop - startTop;
+    if (Math.abs(distance) < 2) {
+      viewport.scrollTop = targetTop;
+      return;
+    }
+
+    const startTime = performance.now();
+    activeScrollTimer = setInterval(() => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // easeOutCubic
+      const ease = 1 - Math.pow(1 - progress, 3);
+      viewport.scrollTop = startTop + distance * ease;
+
+      if (progress >= 1) {
+        clearInterval(activeScrollTimer);
+        activeScrollTimer = null;
+        viewport.scrollTop = targetTop;
+      }
+    }, 16);
+  }
+
   /**
    * @param {TimelineTurnNode} node
    */
   function jumpToTurn(node) {
-    if (!node.element) return;
+    const viewport = getViewport();
+    if (!viewport || !node.element) return;
 
-    // Use pure browser smooth scroll into view
-    node.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Direct geometric delta calculation relative to viewport
+    const vpRect = viewport.getBoundingClientRect();
+    const elRect = node.element.getBoundingClientRect();
+    const currentScrollTop = viewport.scrollTop;
+
+    // Target position: card top aligned near viewport upper comfortable area
+    const relativeOffset = elRect.top - vpRect.top;
+    const targetScrollTop = currentScrollTop + relativeOffset - 40; // 40px comfortable header clearance
+
+    const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    const finalTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+
+    smoothScrollTo(viewport, finalTop, 260);
 
     node.element.classList.remove('agy-timeline-target-highlight');
     void node.element.offsetWidth; // Trigger reflow
@@ -329,13 +376,17 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // 9. Passive Viewport Tracking (Zero scrollTop tampering)
   function setupScrollController(viewport) {
     viewport.addEventListener('scroll', () => {
-      const viewCenter = viewport.scrollTop + (viewport.clientHeight / 3);
+      if (currentNodes.length === 0) return;
+      const vpRect = viewport.getBoundingClientRect();
+      const viewCenter = vpRect.top + (vpRect.height / 3);
+
       let closestNode = null;
       let minDiff = Infinity;
 
       currentNodes.forEach(node => {
-        const top = node.element.offsetTop;
-        const diff = Math.abs(top - viewCenter);
+        if (!node.element) return;
+        const rect = node.element.getBoundingClientRect();
+        const diff = Math.abs(rect.top - viewCenter);
         if (diff < minDiff) {
           minDiff = diff;
           closestNode = node;
@@ -386,7 +437,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     domObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  safelyExpandHistoryOnce();
+  expandAllHistorySilently();
   renderUI();
 
   // 12. Global Cleanup handler
