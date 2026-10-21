@@ -172,6 +172,29 @@
   border-color: rgba(16, 185, 129, 0.45);
 }
 
+/* Load Older Messages Action Header */
+.agy-timeline-load-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: var(--agy-timeline-card-bg);
+  border: 1px dashed var(--agy-timeline-border);
+  border-radius: 8px;
+  color: var(--agy-timeline-accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.agy-timeline-load-btn:hover {
+  background-color: var(--agy-timeline-accent-light);
+  border-color: var(--agy-timeline-accent);
+}
+
 /* Pure Prompt Text (2 lines maximum clamp) */
 .agy-turn-prompt {
   font-size: 13px;

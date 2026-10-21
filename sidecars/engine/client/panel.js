@@ -64,7 +64,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let currentNodes = [];
   /** @type {number | null} */
   let hideTimer = null;
-  let isLoadingOlder = false;
   let isHoveringMenuOrHandle = false;
 
   // 3. Find Viewport
@@ -76,40 +75,18 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
-  // 4. Auto-Expand Folded / Collapsed Older Messages in Antigravity
-  function autoExpandCollapsedMessages() {
-    if (isLoadingOlder) return;
-
-    const viewport = getViewport();
-    if (!viewport) return;
-
-    const loadBtn = Array.from(document.querySelectorAll('button')).find(b => {
+  // 4. Safe History Expansion Controls
+  function findLoadOlderBtn() {
+    return Array.from(document.querySelectorAll('button')).find(b => {
       const text = (b.textContent || '').trim().toLowerCase();
-      return text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史');
-    });
+      return (text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史')) && !b.disabled;
+    }) || null;
+  }
 
-    if (loadBtn && !loadBtn.disabled) {
-      isLoadingOlder = true;
-      const prevScrollTop = viewport.scrollTop;
-      const prevScrollHeight = viewport.scrollHeight;
-
+  function safelyExpandHistoryOnce() {
+    const loadBtn = findLoadOlderBtn();
+    if (loadBtn) {
       loadBtn.click();
-
-      setTimeout(() => {
-        const heightDiff = viewport.scrollHeight - prevScrollHeight;
-        if (heightDiff > 0 && prevScrollTop > 50) {
-          viewport.scrollTop = prevScrollTop + heightDiff;
-        }
-        isLoadingOlder = false;
-        renderUI();
-
-        const hasMore = Array.from(document.querySelectorAll('button')).some(b =>
-          (b.textContent || '').toLowerCase().includes('load older messages')
-        );
-        if (hasMore) {
-          autoExpandCollapsedMessages();
-        }
-      }, 350);
     }
   }
 
@@ -229,6 +206,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const menu = ensureMenu();
     const handle = ensureHandle();
 
+    currentNodes = scanTurns();
     handle.classList.add('is-active');
     renderMenuList(menu, currentNodes);
     menu.classList.add('show');
@@ -253,9 +231,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
    */
   function renderMenuList(menu, nodes) {
     const listEl = menu.querySelector('#agy-menu-list');
+    const olderBtn = findLoadOlderBtn();
+    const expectedCardCount = nodes.length + (olderBtn ? 1 : 0);
 
     // If already rendered with exact same count, avoid destroying innerHTML
-    if (listEl && listEl.children.length === nodes.length && nodes.length > 0) {
+    if (listEl && listEl.children.length === expectedCardCount && nodes.length > 0) {
       updateActiveCardClasses(menu, nodes);
       return;
     }
@@ -273,8 +253,24 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     const newListEl = menu.querySelector('#agy-menu-list');
     if (newListEl) {
+      if (olderBtn) {
+        const loadMoreEl = document.createElement('div');
+        loadMoreEl.className = 'agy-timeline-load-btn';
+        loadMoreEl.innerHTML = `<span>⬆️ ${txt.loadOlder || '加载更早对话历史'}</span>`;
+        loadMoreEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          olderBtn.click();
+          loadMoreEl.innerHTML = `<span>⏳ 加载中...</span>`;
+          setTimeout(() => {
+            currentNodes = scanTurns();
+            renderMenuList(menu, currentNodes);
+          }, 350);
+        });
+        newListEl.appendChild(loadMoreEl);
+      }
+
       if (nodes.length === 0) {
-        newListEl.innerHTML = `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
+        newListEl.innerHTML += `<div style="font-size:12px;color:var(--agy-timeline-muted);padding:14px;text-align:center;">${txt.noTurnsFound}</div>`;
       } else {
         nodes.forEach(node => {
           const card = document.createElement('div');
@@ -297,7 +293,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   /**
-   * Granular class-only update for active states
+   * Granular class-only update for active states (zero DOM recreation)
    * @param {HTMLElement} menu
    * @param {TimelineTurnNode[]} nodes
    */
@@ -311,13 +307,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 8. Jump to Turn with Smooth Scroll and Pulse Glow
+  // 8. Jump to Turn with Smooth Native Scroll and Pulse Glow (Zero interference)
   /**
    * @param {TimelineTurnNode} node
    */
   function jumpToTurn(node) {
     if (!node.element) return;
 
+    // Use pure browser smooth scroll into view
     node.element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     node.element.classList.remove('agy-timeline-target-highlight');
@@ -329,10 +326,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 1500);
   }
 
-  // 9. Smart Scroll Lock (Disable auto-scroll to bottom on send)
-  let lastUserScrollTop = 0;
-  let isLockedByPreference = false;
-
+  // 9. Passive Viewport Tracking (Zero scrollTop tampering)
   function setupScrollController(viewport) {
     viewport.addEventListener('scroll', () => {
       const viewCenter = viewport.scrollTop + (viewport.clientHeight / 3);
@@ -357,36 +351,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
           updateActiveCardClasses(menu, currentNodes);
         }
       }
-
-      const isAtBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) < 40;
-      if (!isAtBottom) {
-        lastUserScrollTop = viewport.scrollTop;
-      }
     }, { passive: true });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && currentPrefs.disableAutoScrollOnSend) {
-        const activeEl = document.activeElement;
-        if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.getAttribute('contenteditable') === 'true')) {
-          isLockedByPreference = true;
-          lastUserScrollTop = viewport.scrollTop;
-
-          const lockInterval = setInterval(() => {
-            if (isLockedByPreference && viewport.scrollTop !== lastUserScrollTop) {
-              viewport.scrollTop = lastUserScrollTop;
-            }
-          }, 40);
-
-          setTimeout(() => {
-            clearInterval(lockInterval);
-            isLockedByPreference = false;
-          }, 2000);
-        }
-      }
-    }, true);
   }
 
-  // 10. Main Update Loop (Safe when user is interacting)
+  // 10. Main Update Loop (Safe and stable)
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
@@ -394,29 +362,31 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     currentNodes = scanTurns();
     ensureHandle();
 
-    // If user is actively hovering over menu, do not destroy/rebuild DOM to eliminate flicker
     const menu = document.getElementById('agy-timeline-menu');
     if (menu && menu.classList.contains('show') && !isHoveringMenuOrHandle) {
       renderMenuList(menu, currentNodes);
     }
   }
 
-  // 11. MutationObserver for dynamic turns & auto-expand
+  // 11. Scoped MutationObserver (Passive structure tracker)
   let updateDebounceTimer = null;
+  const initialViewport = getViewport();
+
   const domObserver = new MutationObserver(() => {
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
     updateDebounceTimer = setTimeout(() => {
-      autoExpandCollapsedMessages();
       renderUI();
-    }, 300);
+    }, 500);
   });
-  domObserver.observe(document.body, { childList: true, subtree: true });
 
-  const initialViewport = getViewport();
   if (initialViewport) {
     setupScrollController(initialViewport);
+    domObserver.observe(initialViewport, { childList: true, subtree: true });
+  } else {
+    domObserver.observe(document.body, { childList: true, subtree: true });
   }
-  autoExpandCollapsedMessages();
+
+  safelyExpandHistoryOnce();
   renderUI();
 
   // 12. Global Cleanup handler

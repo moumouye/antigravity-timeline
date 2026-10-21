@@ -41,6 +41,7 @@ export interface I18nTextMap {
   jumpTooltip: string;
   nowAtCurrent: string;
   noTurnsFound: string;
+  loadOlder?: string;
   settingsTitle: string;
   settingsSubtitle: string;
 }

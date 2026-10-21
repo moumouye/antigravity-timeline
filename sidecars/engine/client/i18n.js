@@ -37,6 +37,7 @@ const DICTIONARIES = {
     jumpTooltip: '点击快速定位至该轮对话',
     nowAtCurrent: '当前浏览位置',
     noTurnsFound: '等待对话生成中...',
+    loadOlder: '加载更早对话历史',
     settingsTitle: '时间线导航设置 (Timeline Navigator)',
     settingsSubtitle: '自定义 Antigravity 对话时间线导航刻度、悬停预览与智能视口防滚屏锁定'
   },
@@ -61,6 +62,7 @@ const DICTIONARIES = {
     jumpTooltip: 'Click to jump to this turn',
     nowAtCurrent: 'Currently viewing',
     noTurnsFound: 'Waiting for conversation turns...',
+    loadOlder: 'Load older messages',
     settingsTitle: 'Timeline Navigator Settings',
     settingsSubtitle: 'Configure right-edge markers, hover popover preview, and smart scroll lock'
   }
