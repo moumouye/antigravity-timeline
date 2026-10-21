@@ -311,14 +311,18 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     });
   }
 
-  // 8. Single-Shot Precision Jump with Easing (Bypasses sticky top-0 traps)
+  // 8. Single-Shot Precision Jump with Immediate User Interruption
   let activeScrollTimer = null;
 
-  function smoothScrollTo(viewport, targetTop, duration = 260) {
+  function cancelScrollAnimation() {
     if (activeScrollTimer) {
       clearInterval(activeScrollTimer);
       activeScrollTimer = null;
     }
+  }
+
+  function smoothScrollTo(viewport, targetTop, duration = 220) {
+    cancelScrollAnimation();
 
     const startTop = viewport.scrollTop;
     const distance = targetTop - startTop;
@@ -336,8 +340,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       viewport.scrollTop = startTop + distance * ease;
 
       if (progress >= 1) {
-        clearInterval(activeScrollTimer);
-        activeScrollTimer = null;
+        cancelScrollAnimation();
         viewport.scrollTop = targetTop;
       }
     }, 16);
@@ -377,7 +380,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     const finalTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
 
-    smoothScrollTo(viewport, finalTop, 260);
+    smoothScrollTo(viewport, finalTop, 220);
 
     node.element.classList.remove('agy-timeline-target-highlight');
     void node.element.offsetWidth; // Trigger reflow
@@ -388,8 +391,19 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 1500);
   }
 
-  // 9. Passive Viewport Tracking (Zero scrollTop tampering)
+  // 9. Passive Viewport Tracking (Zero interference with manual user scroll)
   function setupScrollController(viewport) {
+    // Instantly abort any programmatic animation on direct manual user interaction
+    const onUserInteraction = () => cancelScrollAnimation();
+    viewport.addEventListener('wheel', onUserInteraction, { passive: true });
+    viewport.addEventListener('touchstart', onUserInteraction, { passive: true });
+    viewport.addEventListener('pointerdown', onUserInteraction, { passive: true });
+    window.addEventListener('keydown', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) {
+        cancelScrollAnimation();
+      }
+    }, { passive: true });
+
     viewport.addEventListener('scroll', () => {
       if (currentNodes.length === 0) return;
       const vpRect = viewport.getBoundingClientRect();
@@ -425,10 +439,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
-
-    if (findLoadOlderBtn()) {
-      expandAllHistorySilently();
-    }
 
     currentNodes = scanTurns();
     ensureHandle();
