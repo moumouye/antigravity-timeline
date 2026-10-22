@@ -66,7 +66,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let currentNodes = [];
   /** @type {number | null} */
   let hideTimer = null;
-  let isHoveringMenuOrHandle = false;
+  /** @type {number | null} */
+  let hoverIntentTimer = null;
+  let isHoveringHandle = false;
+  let isHoveringMenu = false;
+
+  function isHovering() {
+    return isHoveringHandle || isHoveringMenu;
+  }
 
   // 3. Conversation & Session Tracking
   function getConversationId() {
@@ -74,10 +81,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return match ? match[1] : '';
   }
 
-  function getCurrentSessionKey() {
-    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  }
-  let currentSessionKey = getCurrentSessionKey();
+  let currentConvId = getConversationId();
 
   function requestFullTurns(convId) {
     if (!convId) convId = getConversationId();
@@ -92,16 +96,47 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (convId && activeConvId && convId !== activeConvId) return;
     if (Array.isArray(turns)) {
       fullTranscriptTurns = turns;
+      if (convId) currentConvId = convId;
       renderUI();
     }
   };
 
   /**
+   * Check and reconcile conversation ID change
+   * @returns {boolean} true if conversation actually changed
+   */
+  function syncSessionState() {
+    const activeConvId = getConversationId();
+    if (activeConvId && activeConvId !== currentConvId) {
+      currentConvId = activeConvId;
+      fullTranscriptTurns = [];
+      currentNodes = [];
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu) delete menu.dataset.renderedSignature;
+      requestFullTurns(activeConvId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * @param {TimelineTurnNode[]} nodes
    */
   function computeNodesSignature(nodes) {
-    if (!nodes || nodes.length === 0) return `${currentSessionKey}::empty`;
-    return `${currentSessionKey}::${nodes.length}::` + nodes.map(n => `${n.index}:${n.userText}`).join('|');
+    const sessionKey = currentConvId || 'unbound';
+    if (!nodes || nodes.length === 0) return `${sessionKey}::empty`;
+    return `${sessionKey}::${nodes.length}::` + nodes.map(n => `${n.index}:${n.userText}`).join('|');
+  }
+
+  /**
+   * Clean and normalize text for reliable cross-DOM matching
+   * @param {string} str
+   */
+  function normalizeTextForMatch(str) {
+    return (str || '')
+      .replace(/@\[(?:Quote|conversation:[^\]]+|file:[^\]]+|[^\]]+)\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   // 4. Find Viewport
@@ -138,7 +173,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const nodes = fullTranscriptTurns.map((item, idx) => ({
         index: item.index || (idx + 1),
         userText: item.preview || `Turn #${idx + 1}`,
-        fullText: item.fullText || item.preview || '',
+        fullText: item.fullText || item.cleanText || item.preview || '',
+        cleanText: item.cleanText || '',
         stepIndex: item.stepIndex,
         responseText: '',
         timeStr: '',
@@ -151,16 +187,20 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       // Bind currently mounted DOM user cards
       userCards.forEach(card => {
         const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
-        const cardText = (quotable.textContent || '').trim().replace(/\s+/g, ' ');
-        if (!cardText) return;
+        const cardRawText = (quotable.textContent || '').trim();
+        const cardNormText = normalizeTextForMatch(cardRawText);
+        if (!cardNormText) return;
 
         const matchedNode = nodes.find(n => {
-          const cleanFull = (n.fullText || '').replace(/\s+/g, ' ');
-          const cleanPrev = (n.userText || '').replace(/\s+/g, ' ');
-          return cardText.startsWith(cleanFull.slice(0, 30)) ||
-                 cleanFull.startsWith(cardText.slice(0, 30)) ||
-                 cardText.startsWith(cleanPrev.slice(0, 30)) ||
-                 cleanPrev.startsWith(cardText.slice(0, 30));
+          const normClean = normalizeTextForMatch(n.cleanText || n.fullText || n.userText);
+          const normUser = normalizeTextForMatch(n.userText);
+          const normFull = normalizeTextForMatch(n.fullText);
+
+          return (
+            (normClean && (cardNormText.startsWith(normClean.slice(0, 25)) || normClean.startsWith(cardNormText.slice(0, 25)))) ||
+            (normUser && (cardNormText.startsWith(normUser.slice(0, 25)) || normUser.startsWith(cardNormText.slice(0, 25)))) ||
+            (normFull && (cardNormText.startsWith(normFull.slice(0, 25)) || normFull.startsWith(cardNormText.slice(0, 25))))
+          );
         });
 
         if (matchedNode) {
@@ -180,7 +220,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     userCards.forEach((card, idx) => {
       const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
       const fullText = (quotable.textContent || '').trim();
-      const firstLines = fullText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
+      const normText = normalizeTextForMatch(fullText);
+      const firstLines = normText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
       const cleanPrompt = firstLines.length > 120 ? firstLines.slice(0, 118) + '...' : firstLines;
 
       let timeStr = '';
@@ -194,6 +235,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         index: idx + 1,
         userText: cleanPrompt,
         fullText,
+        cleanText: normText,
         stepIndex: idx,
         responseText: '',
         timeStr,
@@ -270,25 +312,55 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       document.body.appendChild(handle);
 
       const onHandleEnter = () => {
-        isHoveringMenuOrHandle = true;
-        if (hideTimer) clearTimeout(hideTimer);
-        showMenu();
+        isHoveringHandle = true;
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        // Hover Intent 防抖：停留 110ms 以上才展开，杜绝鼠标快速划过时的非预期误触
+        if (!hoverIntentTimer) {
+          hoverIntentTimer = window.setTimeout(() => {
+            hoverIntentTimer = null;
+            if (isHovering()) {
+              showMenu();
+            }
+          }, 110);
+        }
       };
 
       const onHandleLeave = (e) => {
+        isHoveringHandle = false;
+        if (hoverIntentTimer) {
+          clearTimeout(hoverIntentTimer);
+          hoverIntentTimer = null;
+        }
         const related = /** @type {Node | null} */ (e.relatedTarget);
         const menu = document.getElementById('agy-timeline-menu');
         if (related && menu && (menu === related || menu.contains(related))) {
+          isHoveringMenu = true;
           return;
         }
-        isHoveringMenuOrHandle = false;
         scheduleHideMenu();
       };
 
-      handle.addEventListener('pointerenter', onHandleEnter);
       handle.addEventListener('mouseenter', onHandleEnter);
-      handle.addEventListener('pointerleave', onHandleLeave);
       handle.addEventListener('mouseleave', onHandleLeave);
+
+      // 支持单击直接快速切换展开/关闭
+      handle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (hoverIntentTimer) {
+          clearTimeout(hoverIntentTimer);
+          hoverIntentTimer = null;
+        }
+        const menu = document.getElementById('agy-timeline-menu');
+        if (menu && menu.classList.contains('show')) {
+          hideMenu();
+        } else {
+          isHoveringHandle = true;
+          showMenu();
+        }
+      });
     }
     return handle;
   }
@@ -302,43 +374,41 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       document.body.appendChild(menu);
 
       const onMenuEnter = () => {
-        isHoveringMenuOrHandle = true;
-        if (hideTimer) clearTimeout(hideTimer);
+        isHoveringMenu = true;
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
       };
 
       const onMenuLeave = (e) => {
+        isHoveringMenu = false;
         const related = /** @type {Node | null} */ (e.relatedTarget);
         const handle = document.getElementById('agy-timeline-handle');
         if (related && handle && (handle === related || handle.contains(related))) {
+          isHoveringHandle = true;
           return;
         }
-        isHoveringMenuOrHandle = false;
         scheduleHideMenu();
       };
 
-      menu.addEventListener('pointerenter', onMenuEnter);
       menu.addEventListener('mouseenter', onMenuEnter);
-      menu.addEventListener('pointerleave', onMenuLeave);
       menu.addEventListener('mouseleave', onMenuLeave);
     }
     return menu;
   }
 
   function showMenu() {
-    if (hideTimer) clearTimeout(hideTimer);
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
     const menu = ensureMenu();
     const handle = ensureHandle();
     const viewport = getViewport();
 
-    // Check session change
-    const newSessionKey = getCurrentSessionKey();
-    if (newSessionKey !== currentSessionKey) {
-      currentSessionKey = newSessionKey;
-      currentNodes = [];
-      fullTranscriptTurns = [];
-      delete menu.dataset.renderedSignature;
-      requestFullTurns();
-    }
+    // Check and sync session state without losing transcript data
+    syncSessionState();
 
     currentNodes = scanTurns();
     updateActiveNode(currentNodes, viewport);
@@ -351,16 +421,32 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     scrollMenuToActiveTurn(menu, viewport);
   }
 
-  function scheduleHideMenu() {
+  function hideMenu() {
+    if (hoverIntentTimer) {
+      clearTimeout(hoverIntentTimer);
+      hoverIntentTimer = null;
+    }
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    isHoveringHandle = false;
+    isHoveringMenu = false;
+
+    const menu = document.getElementById('agy-timeline-menu');
+    const handle = document.getElementById('agy-timeline-handle');
+    if (menu) menu.classList.remove('show');
+    if (handle) handle.classList.remove('is-active');
+  }
+
+  function scheduleHideMenu(delay = 200) {
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = window.setTimeout(() => {
-      if (!isHoveringMenuOrHandle) {
-        const menu = document.getElementById('agy-timeline-menu');
-        const handle = document.getElementById('agy-timeline-handle');
-        if (menu) menu.classList.remove('show');
-        if (handle) handle.classList.remove('is-active');
+      hideTimer = null;
+      if (!isHovering()) {
+        hideMenu();
       }
-    }, 280);
+    }, delay);
   }
 
   /**
@@ -619,24 +705,20 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     setupScrollController(viewport);
 
-    // Session detection
-    const newSessionKey = getCurrentSessionKey();
-    if (newSessionKey !== currentSessionKey) {
-      currentSessionKey = newSessionKey;
-      currentNodes = [];
-      fullTranscriptTurns = [];
-      const menu = document.getElementById('agy-timeline-menu');
-      if (menu) delete menu.dataset.renderedSignature;
-      requestFullTurns();
-    }
+    // Sync session state without discarding transcript cache
+    syncSessionState();
 
     currentNodes = scanTurns();
     updateActiveNode(currentNodes, viewport);
     ensureHandle();
 
     const menu = document.getElementById('agy-timeline-menu');
-    if (menu && menu.classList.contains('show') && !isHoveringMenuOrHandle) {
-      renderMenuList(menu, currentNodes);
+    if (menu && menu.classList.contains('show')) {
+      if (isHovering()) {
+        renderMenuList(menu, currentNodes);
+      } else {
+        hideMenu();
+      }
     }
   }
 
@@ -658,26 +740,109 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     domObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  window.addEventListener('popstate', () => {
-    currentNodes = [];
-    fullTranscriptTurns = [];
-    renderUI();
-    requestFullTurns();
-  });
-  window.addEventListener('hashchange', () => {
-    currentNodes = [];
-    fullTranscriptTurns = [];
-    renderUI();
-    requestFullTurns();
-  });
+  // 14. Global Safety Watchdog & Auto-Dismiss System
+  // 14.1 Click Outside to instantly dismiss
+  const onGlobalPointerDown = (e) => {
+    const menu = document.getElementById('agy-timeline-menu');
+    const handle = document.getElementById('agy-timeline-handle');
+    if (menu && menu.classList.contains('show')) {
+      const target = /** @type {Node | null} */ (e.target);
+      if (target && !menu.contains(target) && !handle?.contains(target)) {
+        hideMenu();
+      }
+    }
+  };
+  document.addEventListener('pointerdown', onGlobalPointerDown, { capture: true, passive: true });
+
+  // 14.2 ESC key to instantly dismiss
+  const onGlobalKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu && menu.classList.contains('show')) {
+        hideMenu();
+      }
+    }
+  };
+  window.addEventListener('keydown', onGlobalKeyDown, { passive: true });
+
+  // 14.3 Window blur (switching apps/windows) to dismiss
+  const onWindowBlur = () => {
+    hideMenu();
+  };
+  window.addEventListener('blur', onWindowBlur);
+
+  // 14.4 Pointer coordinate watchdog: guarantees auto-hide when pointer is physically outside
+  const onGlobalPointerMove = (e) => {
+    const menu = document.getElementById('agy-timeline-menu');
+    if (!menu || !menu.classList.contains('show')) return;
+
+    const handle = document.getElementById('agy-timeline-handle');
+    const mRect = menu.getBoundingClientRect();
+    const hRect = handle ? handle.getBoundingClientRect() : null;
+    const { clientX: x, clientY: y } = e;
+
+    const margin = 20;
+    const inMenu = x >= mRect.left - margin && x <= mRect.right + margin &&
+                   y >= mRect.top - margin && y <= mRect.bottom + margin;
+    const inHandle = hRect ? (x >= hRect.left - margin && x <= hRect.right + margin &&
+                              y >= hRect.top - margin && y <= hRect.bottom + margin) : false;
+
+    if (!inMenu && !inHandle) {
+      if (isHoveringHandle || isHoveringMenu) {
+        isHoveringHandle = false;
+        isHoveringMenu = false;
+        scheduleHideMenu(140);
+      }
+    }
+  };
+  document.addEventListener('pointermove', onGlobalPointerMove, { passive: true });
+
+  // 14.5 SPA Route Switching Interception
+  const originalPushState = history.pushState;
+  history.pushState = function(...args) {
+    originalPushState.apply(this, args);
+    setTimeout(() => {
+      if (syncSessionState()) {
+        renderUI();
+      }
+    }, 60);
+  };
+
+  const originalReplaceState = history.replaceState;
+  history.replaceState = function(...args) {
+    originalReplaceState.apply(this, args);
+    setTimeout(() => {
+      if (syncSessionState()) {
+        renderUI();
+      }
+    }, 60);
+  };
+
+  const onPopState = () => {
+    if (syncSessionState()) {
+      renderUI();
+    }
+  };
+  window.addEventListener('popstate', onPopState);
+  window.addEventListener('hashchange', onPopState);
 
   renderUI();
   requestFullTurns();
 
-  // 14. Global Cleanup handler
+  // 15. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     cancelScrollAnimation();
+    if (hoverIntentTimer) clearTimeout(hoverIntentTimer);
+    if (hideTimer) clearTimeout(hideTimer);
     domObserver.disconnect();
+    document.removeEventListener('pointerdown', onGlobalPointerDown, { capture: true });
+    window.removeEventListener('keydown', onGlobalKeyDown);
+    window.removeEventListener('blur', onWindowBlur);
+    document.removeEventListener('pointermove', onGlobalPointerMove);
+    window.removeEventListener('popstate', onPopState);
+    window.removeEventListener('hashchange', onPopState);
+    history.pushState = originalPushState;
+    history.replaceState = originalReplaceState;
     staleSelectors.forEach(sel => {
       document.querySelectorAll(sel).forEach(el => el.remove());
     });

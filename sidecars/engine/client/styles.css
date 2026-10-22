@@ -56,6 +56,7 @@
   background-color: var(--agy-timeline-accent);
   box-shadow: 0 0 4px var(--agy-timeline-accent-glow);
   transition: all 0.2s ease;
+  pointer-events: none;
 }
 
 #agy-timeline-handle:hover .agy-handle-bar,
@@ -90,14 +91,14 @@
   contain: layout style;
 }
 
-/* Seamless Hover Bridge connecting Menu to Handle */
+/* Precise Hover Bridge connecting Menu to Handle (scoped to handle height) */
 #agy-timeline-menu::after {
   content: "";
   position: absolute;
-  top: 0;
+  top: calc(50% - 32px);
   right: -24px;
   width: 24px;
-  height: 100%;
+  height: 64px;
   background: transparent;
   pointer-events: auto;
 }

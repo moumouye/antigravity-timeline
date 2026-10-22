@@ -4,10 +4,16 @@
 
 ---
 
-## [Unreleased]
+## [1.5.1] - 2026-10-22
 
+- 🐛 `fix`: 修复长对话轮次残缺退化问题，废除包含瞬态 query 的 SessionKey 判定，确立以 `convId` 为单一真实源，支持客户端主动请求强制全量推送与引用前缀标准化清洗
+- 🐛 `fix`: 修复无主动悬停时手柄误触弹出与弹出后无法自动关闭问题，引入 110ms Hover Intent 意图防抖，并建立 Click Outside、ESC 键、Window Blur 与全局物理坐标移动看门狗闭环安全网
+- 💄 `style`: 移除菜单覆盖整屏 72vh 高度的巨型 `::after` 桥接伪元素，将悬停桥接收敛至手柄局部安全高度范围，彻底消除右侧视口热区污染
 - ⚡ `perf`: 将冷数据按需展开等待机制重构为微任务级 DOM Mutation 侦听，将首次冷跳转等待响应耗时大幅压缩至 150ms 左右
-- 📝 `docs`: 依照 AI 原生软件工程范式重塑 ARCHITECTURE.md（四维真理库）、AGENTS.md（精简指针与门禁）与 README.md
+- 🧪 `test`: 端到端自动化测试新增对 Hover Intent 防抖延时与全局自动收起闭环的回归覆盖
+- 📝 `docs`: 依照 AI 原生软件工程范式重塑 ARCHITECTURE.md（四维真理库）、AGENTS.md（精简指针与门禁）与 README.md，新增 AP-06 与 AP-07 架构避坑档案
+
+---
 
 ## [1.5.0] - 2026-10-21
 

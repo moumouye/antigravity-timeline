@@ -14,6 +14,7 @@ export interface TimelineTurnNode {
   index: number;
   userText: string;
   fullText?: string;
+  cleanText?: string;
   stepIndex?: number;
   responseText: string;
   timeStr: string;

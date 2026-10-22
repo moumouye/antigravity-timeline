@@ -58,6 +58,23 @@ function buildWrappedScript(injectScript, savedPrefs) {
   `;
 }
 
+function sanitizeUserPrompt(rawContent) {
+  let text = (rawContent || '').trim();
+  // 1. 剥离系统包装标签
+  text = text.replace(/<\/?USER_REQUEST>/g, '')
+             .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
+             .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
+             .trim();
+
+  // 2. 剥离引用前缀标签 (如 @[Quote] 或 @[conversation:"..."] 或 @[file:"..."])
+  const cleanPrompt = text.replace(/@\[(?:Quote|conversation:[^\]]+|file:[^\]]+|[^\]]+)\]/g, '').trim();
+
+  return {
+    raw: text,
+    clean: cleanPrompt || text
+  };
+}
+
 async function loadTranscriptTurns(convId) {
   if (!convId) return [];
   const filePath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
@@ -71,18 +88,15 @@ async function loadTranscriptTurns(convId) {
       try {
         const item = JSON.parse(line);
         if (item.type === 'USER_INPUT') {
-          let text = (item.content || '').trim();
-          text = text.replace(/<\/?USER_REQUEST>/g, '')
-                     .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
-                     .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
-                     .trim();
-          const lns = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          const { raw: rawText, clean: cleanText } = sanitizeUserPrompt(item.content);
+          const lns = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
           const preview = lns.slice(0, 2).join(' ') || (`Turn #${turnIdx}`);
           turns.push({
             index: turnIdx++,
             stepIndex: item.step_index,
             preview: preview.length > 120 ? preview.slice(0, 118) + '...' : preview,
-            fullText: text,
+            fullText: rawText,
+            cleanText: cleanText,
             createdAt: item.created_at || ''
           });
         }
@@ -94,11 +108,11 @@ async function loadTranscriptTurns(convId) {
   }
 }
 
-async function pushTurnsToPage(client, convId) {
+async function pushTurnsToPage(client, convId, force = false) {
   if (!client || client.closed || !convId) return;
   const turns = await loadTranscriptTurns(convId);
   const signature = `${convId}::${turns.length}::${turns[turns.length - 1]?.preview || ''}`;
-  if (client.lastSentTurnsSignature === signature) return;
+  if (!force && client.lastSentTurnsSignature === signature) return;
   client.lastSentTurnsSignature = signature;
 
   try {
@@ -227,7 +241,7 @@ async function attachToPage(target, injectScript, savedPrefs) {
     } else if (name === '__agyTimelineRequestTurns') {
       try {
         const convId = payload;
-        await pushTurnsToPage(client, convId);
+        await pushTurnsToPage(client, convId, true);
       } catch {}
     }
   }, onReload);

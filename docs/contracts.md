@@ -45,7 +45,7 @@ flowchart TB
 | 绑定方法 / 评估表达式 | 发起方 | 接收方 | 载荷参数 | 契约职责与说明 |
 | :--- | :--- | :--- | :--- | :--- |
 | `window.__agyReceiveFullTurns(convId, turns)` | Sidecar | Client | `convId: string`<br>`turns: Array<TranscriptTurn>` | 将解析后的全量会话轮次推入客户端内存，供时间线菜单直出展示。 |
-| `__agyTimelineRequestTurns(convId)` | Client | Sidecar | `convId: string` | 客户端路由切换或初始化时，向后台主动请求当前会话的最新数据。 |
+| `__agyTimelineRequestTurns(convId)` | Client | Sidecar | `convId: string` | 客户端路由切换或初始化时，向后台主动请求当前会话的最新数据（Sidecar 必须无条件全量推送，忽略签名防重截断）。 |
 | `__agyTimelineSavePrefs(jsonString)` | Client | Sidecar | `jsonString: string` | 客户端修改用户偏好设置后，回传给 Sidecar 执行原子磁盘持久化。 |
 | `window.location.pathname` | Sidecar | Client | 无 (查询) | Sidecar 每 1.2 秒轮询客户端当前路径，捕获 `/c/<conv-id>` 会话切换事件。 |
 
@@ -61,6 +61,7 @@ export interface TimelineTurnNode {
   index: number;              // 轮次编号（从 1 开始递增）
   userText: string;           // 纯净提问摘要（两行截断预览，最多 120 字符）
   fullText?: string;          // 完整提问正文（用于跨 DOM 前缀精确匹配）
+  cleanText?: string;         // 剥离引用标签后的纯净提问文本
   stepIndex?: number;         // 底层 transcript 内部步骤索引
   responseText: string;       // 留空（纯提问高密度排版，彻底剥离回复）
   timeStr: string;            // 时间戳标记（HH:mm）

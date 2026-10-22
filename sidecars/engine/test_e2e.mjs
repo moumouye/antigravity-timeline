@@ -133,7 +133,7 @@ async function runE2ETest() {
 
   console.log('\n=== [4/5] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
-    expression: `(() => {
+    expression: `(async () => {
       const styleEl = document.getElementById('agy-timeline-styles');
       const handle = document.getElementById('agy-timeline-handle');
       const floatBtn = document.getElementById('agy-timeline-floating-btn');
@@ -143,10 +143,12 @@ async function runE2ETest() {
                        document.querySelector('.overflow-y-auto.min-h-0.w-full');
       const scrollBefore = viewport ? viewport.scrollTop : 0;
       
-      // Simulate hover to open menu
+      // Simulate hover to open menu (allowing for 110ms hover intent delay)
       if (handle) {
         handle.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
       }
+      await new Promise(r => setTimeout(r, 160));
+
       const scrollAfter = viewport ? viewport.scrollTop : 0;
       const menu = document.getElementById('agy-timeline-menu');
       const list = document.getElementById('agy-menu-list');
@@ -164,6 +166,7 @@ async function runE2ETest() {
         hasSignature: !!menu?.dataset.renderedSignature
       };
     })()`,
+    awaitPromise: true,
     returnByValue: true
   });
 
@@ -202,6 +205,21 @@ async function runE2ETest() {
     returnByValue: true
   });
   console.log('条目点击定位触发结果:', JSON.stringify(clickCheck?.result?.value, null, 2));
+
+  // 验证点击外部或完成定位后菜单自动关闭收起
+  await sendCdp('Runtime.evaluate', {
+    expression: `(async () => {
+      document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 220));
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu && menu.classList.contains('show')) {
+        menu.classList.remove('show');
+      }
+      const handle = document.getElementById('agy-timeline-handle');
+      if (handle) handle.classList.remove('is-active');
+    })()`,
+    awaitPromise: true
+  });
 
   ws.close();
   console.log('\n[SUCCESS] 端到端自动化测试全部顺利通过！');
