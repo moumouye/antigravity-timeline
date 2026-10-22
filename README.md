@@ -66,8 +66,8 @@ antigrative-timeline/
 ├── ARCHITECTURE.md           # 四维系统总架构地图与按需调阅导航
 ├── CHANGELOG.md              # 面向用户与大众的发布日志 (Public Release Log)
 ├── README.md                 # 项目使用与全局地图导览
-├── AGENTS.md                 # 面向 AI 智能体的入场行为规范与索引指针
-├── docs/                     # 📚 AI 时代四维结构化工程真理库
+├── AGENTS.md                 # 架构治理与协同准则
+├── docs/                     # 📚 四维结构化工程真理库
 │   ├── boundaries.md         # ① 边界与红线 (技术栈、沙箱隔离、0位移铁律)
 │   ├── contracts.md          # ② 契约与流向 (数据管道、CDP IPC 协议、类型定义)
 │   ├── anti-patterns.md      # ③ 否决与避坑档案 (实测枪毙的 5 大废案根因)

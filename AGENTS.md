@@ -1,20 +1,21 @@
-# AI 协同维护与行为规范 (AI Operational Guide)
+# 架构治理与协同准则 (Architecture & Contribution Guide)
 
-本文件是面向 AI 智能体的入场行为规范与索引指针。每次开启新对话时系统会自动加载此规范。
+本文档定义系统架构指针、质量验收门禁、语义化版本与代码提交标准。
 
 ---
 
-## 1. 架构指针与防翻车门禁 (Architecture Pointer & Verification Gate)
+## 1. 架构指针与质量门禁 (Architecture Pointers & Verification Gate)
 
-为保证在无状态会话接力中系统稳定不退化，所有 AI 必须严格遵守以下物理铁律：
+为保证系统架构一致性与代码质量，所有代码变更须遵守以下规范：
 
-1. **动手前必读指针**：任何涉及核心通信、DOM 交互或定位逻辑的改动前，**必须首先查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md)**，并按需调阅 [`docs/`](docs/) 下的对应真理库（[`docs/boundaries.md`](docs/boundaries.md)、[`docs/contracts.md`](docs/contracts.md)、[`docs/anti-patterns.md`](docs/anti-patterns.md)）；
-2. **交付前自动化测试门禁**：在声称任务完成前，**必须本地运行并全绿通过自动化测试**（参考 [`docs/verification.md`](docs/verification.md)）：
+1. **架构索引指针**：修改核心通信、DOM 交互或定位逻辑前，查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md) 并调阅 [`docs/`](docs/) 对应真理库（[`docs/boundaries.md`](docs/boundaries.md)、[`docs/contracts.md`](docs/contracts.md)、[`docs/anti-patterns.md`](docs/anti-patterns.md)）；
+2. **自动化测试门禁**：代码提交前必须本地全绿通过端到端测试（参考 [`docs/verification.md`](docs/verification.md)）：
    ```bash
-   python3 manage.py test
+   uv run manage.py test
+   # 或 python3 manage.py test
    ```
-   若测试报错（如主视口产生非预期位移、条目数量不符），严禁向用户交付，必须自行排查修复直至测试完全通过；
-3. **单一真理维护原则**：若任务涉及架构重构或核心流程调整，必须在代码提交的同时，**直接“覆盖更新”[`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md) 的对应章节**，确保架构文档永远仅反映最新代码真理，严禁在架构文档中保留时间线流水账或过时废案。
+   若测试未全绿通过（如主视口产生位移、条目数量不符），严禁提交代码，须修复至完全通过；
+3. **单一真理维护原则**：系统架构重构或核心流程调整时，代码提交须同步覆盖更新 [`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md)，确保技术文档与代码实现严格一致，历史变更统一归入 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ---
 
