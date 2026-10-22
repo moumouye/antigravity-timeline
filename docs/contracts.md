@@ -24,6 +24,7 @@ flowchart TB
         Receiver["window.__agyReceiveFullTurns(convId, turns)<br/>(内存全量元数据仓库)"]
         DOMReconcile["DOM 挂载探针 (scanTurns)<br/>(匹配当前视口已有卡片，区分已挂载与已折叠)"]
         ActiveSpy["视口活跃度解算器 (updateActiveNode)<br/>(底部聚焦最新，中间聚焦临近轮次)"]
+        AnchorController["智能提问锚定控制器 (checkAndApplyViewAnchoring)<br/>(会话切换直达末轮头部 / 新提问防下滚锁定)"]
         RenderGuard["增量签名守卫 (data-renderedSignature)<br/>(无新增轮次时仅更新样式类，DOM 零重绘)"]
         UIEntry["右侧居中手柄与时间线弹出菜单<br/>(#agy-timeline-handle / #agy-timeline-menu)"]
     end
@@ -34,6 +35,7 @@ flowchart TB
     Scanner -->|推送全量轮次数组| CdpHost
     Receiver --> DOMReconcile
     DOMReconcile --> ActiveSpy
+    DOMReconcile --> AnchorController
     ActiveSpy --> RenderGuard
     RenderGuard --> UIEntry
 ```

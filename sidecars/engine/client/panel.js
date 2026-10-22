@@ -83,6 +83,20 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
   let currentConvId = getConversationId();
 
+  // Smart Turn Anchoring Controller state
+  let userInteractedWithScroll = false;
+  let sessionArrivalPending = true; // True on initial load or conversation switch
+  let sessionArrivalDeadline = performance.now() + 1200;
+  let lastKnownTurnCount = 0;
+  let streamLockActive = false;
+
+  function triggerSessionArrivalAnchor() {
+    sessionArrivalPending = true;
+    userInteractedWithScroll = false;
+    sessionArrivalDeadline = performance.now() + 1200;
+    streamLockActive = false;
+  }
+
   function requestFullTurns(convId) {
     if (!convId) convId = getConversationId();
     if (typeof window.__agyTimelineRequestTurns === 'function' && convId) {
@@ -111,6 +125,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       currentConvId = activeConvId;
       fullTranscriptTurns = [];
       currentNodes = [];
+      lastKnownTurnCount = 0;
+      triggerSessionArrivalAnchor();
       const menu = document.getElementById('agy-timeline-menu');
       if (menu) delete menu.dataset.renderedSignature;
       requestFullTurns(activeConvId);
@@ -578,7 +594,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 16);
   }
 
-  function scrollToElement(viewport, element) {
+  function computeTargetScrollTopForElement(viewport, element) {
     const turnContainer = element.closest('[class*="scroll-mt"]') || element;
     const vpRect = viewport.getBoundingClientRect();
     const elRect = turnContainer.getBoundingClientRect();
@@ -588,8 +604,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const targetScrollTop = currentScrollTop + relativeOffset - 24;
 
     const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-    const finalTop = Math.max(0, Math.min(maxScroll, targetScrollTop));
+    return Math.max(0, Math.min(maxScroll, targetScrollTop));
+  }
 
+  function scrollToElement(viewport, element) {
+    const finalTop = computeTargetScrollTopForElement(viewport, element);
     smoothScrollTo(viewport, finalTop, 220);
 
     element.classList.remove('agy-timeline-target-highlight');
@@ -670,7 +689,54 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
   }
 
-  // 11. Passive Viewport Tracking
+  // 11. Smart Turn Anchoring Controller (Session Switch Arrival & New Turn Lock)
+  function checkAndApplyViewAnchoring(viewport) {
+    if (!viewport) return;
+    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
+    if (userCards.length === 0) return;
+
+    const currentCount = userCards.length;
+    const lastCard = userCards[currentCount - 1];
+
+    // 场景 1：切换/进入新对话时，自动定位至最后一轮对话的刚开始（图 2 状态）
+    if (sessionArrivalPending && !userInteractedWithScroll) {
+      const now = performance.now();
+      if (now > sessionArrivalDeadline) {
+        sessionArrivalPending = false;
+      } else {
+        const finalTop = computeTargetScrollTopForElement(viewport, lastCard);
+        const isNearBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
+        const diff = Math.abs(viewport.scrollTop - finalTop);
+
+        // 如果视口被宿主自动推到底部，或初次加载偏差大于 10px，立即对齐到最后一轮提问头部
+        if (isNearBottom || diff > 10) {
+          viewport.scrollTop = finalTop;
+        }
+      }
+    }
+
+    // 场景 2：在当前会话中产生新一轮对话（用户发送了新提问）
+    if (lastKnownTurnCount > 0 && currentCount > lastKnownTurnCount) {
+      if (currentPrefs.disableAutoScrollOnSend) {
+        userInteractedWithScroll = false;
+        streamLockActive = true;
+        scrollToElement(viewport, lastCard);
+      }
+    }
+
+    // 场景 2 伴随：模型在流式输出期间，维持视口在这一轮提问头部，防止被宿主强制滚底
+    if (streamLockActive && !userInteractedWithScroll && currentPrefs.disableAutoScrollOnSend) {
+      const finalTop = computeTargetScrollTopForElement(viewport, lastCard);
+      const isNearBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
+      if (isNearBottom) {
+        viewport.scrollTop = finalTop;
+      }
+    }
+
+    lastKnownTurnCount = currentCount;
+  }
+
+  // 12. Passive Viewport Tracking
   /** @type {HTMLElement | null} */
   let trackedViewport = null;
 
@@ -678,13 +744,18 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (trackedViewport === viewport) return;
     trackedViewport = viewport;
 
-    const onUserInteraction = () => cancelScrollAnimation();
+    const onUserInteraction = () => {
+      cancelScrollAnimation();
+      userInteractedWithScroll = true;
+      sessionArrivalPending = false;
+      streamLockActive = false;
+    };
     viewport.addEventListener('wheel', onUserInteraction, { passive: true });
     viewport.addEventListener('touchstart', onUserInteraction, { passive: true });
     viewport.addEventListener('pointerdown', onUserInteraction, { passive: true });
     window.addEventListener('keydown', (e) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) {
-        cancelScrollAnimation();
+        onUserInteraction();
       }
     }, { passive: true });
 
@@ -698,7 +769,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, { passive: true });
   }
 
-  // 12. Main Update Loop
+  // 13. Main Update Loop
   function renderUI() {
     const viewport = getViewport();
     if (!viewport) return;
@@ -712,6 +783,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     updateActiveNode(currentNodes, viewport);
     ensureHandle();
 
+    // Check and anchor viewport to latest turn header (Session Arrival & Stream Guard)
+    checkAndApplyViewAnchoring(viewport);
+
     const menu = document.getElementById('agy-timeline-menu');
     if (menu && menu.classList.contains('show')) {
       if (isHovering()) {
@@ -722,11 +796,15 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
   }
 
-  // 13. Scoped MutationObserver
+  // 14. Scoped MutationObserver
   let updateDebounceTimer = null;
   const initialViewport = getViewport();
 
   const domObserver = new MutationObserver(() => {
+    const vp = getViewport();
+    if (vp) {
+      checkAndApplyViewAnchoring(vp);
+    }
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
     updateDebounceTimer = setTimeout(() => {
       renderUI();
@@ -740,8 +818,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     domObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  // 14. Global Safety Watchdog & Auto-Dismiss System
-  // 14.1 Click Outside to instantly dismiss
+  // 15. Global Safety Watchdog & Auto-Dismiss System
+  // 15.1 Click Outside to instantly dismiss
   const onGlobalPointerDown = (e) => {
     const menu = document.getElementById('agy-timeline-menu');
     const handle = document.getElementById('agy-timeline-handle');
@@ -754,7 +832,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   };
   document.addEventListener('pointerdown', onGlobalPointerDown, { capture: true, passive: true });
 
-  // 14.2 ESC key to instantly dismiss
+  // 15.2 ESC key to instantly dismiss
   const onGlobalKeyDown = (e) => {
     if (e.key === 'Escape') {
       const menu = document.getElementById('agy-timeline-menu');
@@ -765,13 +843,13 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   };
   window.addEventListener('keydown', onGlobalKeyDown, { passive: true });
 
-  // 14.3 Window blur (switching apps/windows) to dismiss
+  // 15.3 Window blur (switching apps/windows) to dismiss
   const onWindowBlur = () => {
     hideMenu();
   };
   window.addEventListener('blur', onWindowBlur);
 
-  // 14.4 Pointer coordinate watchdog: guarantees auto-hide when pointer is physically outside
+  // 15.4 Pointer coordinate watchdog: guarantees auto-hide when pointer is physically outside
   const onGlobalPointerMove = (e) => {
     const menu = document.getElementById('agy-timeline-menu');
     if (!menu || !menu.classList.contains('show')) return;
@@ -797,7 +875,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   };
   document.addEventListener('pointermove', onGlobalPointerMove, { passive: true });
 
-  // 14.5 SPA Route Switching Interception
+  // 15.5 SPA Route Switching Interception
   const originalPushState = history.pushState;
   history.pushState = function(...args) {
     originalPushState.apply(this, args);
@@ -829,7 +907,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   renderUI();
   requestFullTurns();
 
-  // 15. Global Cleanup handler
+  // 16. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     cancelScrollAnimation();
     if (hoverIntentTimer) clearTimeout(hoverIntentTimer);
