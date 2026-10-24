@@ -15,7 +15,7 @@ flowchart TD
 
     Doc1["<b>① 边界与红线 (Boundaries)</b><br/><code>docs/boundaries.md</code><br/>技术栈边界、沙箱通信隔离、主视口 0 位移物理铁律"]
     Doc2["<b>② 契约与流向 (Contracts)</b><br/><code>docs/contracts.md</code><br/>数据管道、CDP IPC 协议、TypeScript 类型契约"]
-    Doc3["<b>③ 否决与避坑档案 (Anti-Patterns)</b><br/><code>docs/anti-patterns.md</code><br/>暗知识档案：实测枪毙的 5 大废案及根因"]
+    Doc3["<b>③ 否决与避坑档案 (Anti-Patterns)</b><br/><code>docs/anti-patterns.md</code><br/>暗知识档案：实测枪毙的 9 大核心技术废案及根因"]
     Doc4["<b>④ 自动化验收门禁 (Verification)</b><br/><code>docs/verification.md</code><br/>端到端测试用例标准、硬性断言与自修复排查手册"]
 
     Hub --> Doc1
@@ -34,7 +34,7 @@ flowchart TD
 
 ### 3. [③ 否决与避坑档案 (docs/anti-patterns.md)](docs/anti-patterns.md)
 * **适用场景**：排查定位异常、尝试新优化算法或考虑重构方案时必读；
-* **核心内容**：详细记录为什么不能依赖前端 DOM、为什么悬停绝不能模拟点击、为什么不能用固定延时轮询等 5 大被枪毙方案。
+* **核心内容**：详细记录为什么不能依赖前端 DOM、为什么悬停绝不能模拟点击、为什么不能单点监听局部视口容器等 9 大核心被枪毙方案。
 
 ### 4. [④ 自动化验收门禁 (docs/verification.md)](docs/verification.md)
 * **适用场景**：代码变更提交或发布前必读并全绿通过；

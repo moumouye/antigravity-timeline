@@ -75,10 +75,40 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return isHoveringHandle || isHoveringMenu;
   }
 
-  // 3. Conversation & Session Tracking
+  // 3. Robust Multi-Source Conversation ID Detector
   function getConversationId() {
-    const match = window.location.pathname.match(/\/c\/([a-f0-9\-]+)/);
-    return match ? match[1] : '';
+    // 1. Primary: Active conversation-view container cascade-id
+    const viewEl = document.querySelector('[data-testid="conversation-view"]');
+    const viewCascadeId = viewEl?.getAttribute('data-cascade-id');
+    if (viewCascadeId && /^[a-f0-9\-]+$/i.test(viewCascadeId)) {
+      return viewCascadeId;
+    }
+
+    // 2. Secondary: Currently selected sidebar row
+    const selectedRow = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
+    const rowCascadeId = selectedRow?.getAttribute('data-cascade-id');
+    if (rowCascadeId && /^[a-f0-9\-]+$/i.test(rowCascadeId)) {
+      return rowCascadeId;
+    }
+
+    const selectedLink = document.querySelector('[class*="bg-sidebar-secondary"] a[href*="/c/"], [class*="bg-sidebar-accent"] a[href*="/c/"]');
+    const selectedHref = selectedLink?.getAttribute('href') || '';
+    const hrefMatch = selectedHref.match(/\/c\/([a-f0-9\-]+)/i);
+    if (hrefMatch) {
+      return hrefMatch[1];
+    }
+
+    // 3. Tertiary: Fallback to pathname / search / href
+    const pathMatch = window.location.pathname.match(/\/c\/([a-f0-9\-]+)/i);
+    if (pathMatch) return pathMatch[1];
+
+    const searchMatch = window.location.search.match(/conversationId=([a-f0-9\-]+)/i);
+    if (searchMatch) return searchMatch[1];
+
+    const fullHrefMatch = window.location.href.match(/\/c\/([a-f0-9\-]+)/i);
+    if (fullHrefMatch) return fullHrefMatch[1];
+
+    return '';
   }
 
   let currentConvId = getConversationId();
@@ -86,15 +116,71 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // Smart Turn Anchoring Controller state
   let userInteractedWithScroll = false;
   let sessionArrivalPending = true; // True on initial load or conversation switch
-  let sessionArrivalDeadline = performance.now() + 1200;
+  let sessionArrivalStartTime = performance.now();
+  let firstAlignedTime = 0;
   let lastKnownTurnCount = 0;
   let streamLockActive = false;
+  let arrivalAnchorRaf = null;
 
-  function triggerSessionArrivalAnchor() {
+  function triggerSessionArrivalAnchor(reason = 'session_switch') {
     sessionArrivalPending = true;
     userInteractedWithScroll = false;
-    sessionArrivalDeadline = performance.now() + 1200;
+    sessionArrivalStartTime = performance.now();
+    firstAlignedTime = 0;
     streamLockActive = false;
+
+    if (arrivalAnchorRaf) {
+      cancelAnimationFrame(arrivalAnchorRaf);
+      arrivalAnchorRaf = null;
+    }
+    runArrivalAnchorLoop();
+  }
+
+  function checkAndApplyArrivalAnchor(viewport) {
+    if (!sessionArrivalPending || userInteractedWithScroll || !viewport) return;
+
+    setupScrollController(viewport);
+    const now = performance.now();
+    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
+
+    if (userCards.length > 0) {
+      const lastCard = userCards[userCards.length - 1];
+      const finalTop = computeTargetScrollTopForElement(viewport, lastCard);
+      const diff = Math.abs(viewport.scrollTop - finalTop);
+
+      // 如果视口偏离最后一轮提问头部（例如被宿主强推到底部），立即纠正对齐
+      if (diff > 5) {
+        viewport.scrollTop = finalTop;
+      }
+
+      if (firstAlignedTime === 0) {
+        firstAlignedTime = now;
+      } else if (now - firstAlignedTime > 1800) {
+        // 宿主 autoscroll 均已收敛平息且视口稳定在目标位置超过 1.8 秒，平稳退出到达守护
+        sessionArrivalPending = false;
+      }
+    } else {
+      // 卡片尚未挂载完全时，设置 4500ms 超时上限
+      if (now - sessionArrivalStartTime > 4500) {
+        sessionArrivalPending = false;
+      }
+    }
+  }
+
+  function runArrivalAnchorLoop() {
+    if (!sessionArrivalPending || userInteractedWithScroll) {
+      sessionArrivalPending = false;
+      return;
+    }
+
+    const viewport = getViewport();
+    if (viewport) {
+      checkAndApplyArrivalAnchor(viewport);
+    }
+
+    if (sessionArrivalPending) {
+      arrivalAnchorRaf = requestAnimationFrame(runArrivalAnchorLoop);
+    }
   }
 
   function requestFullTurns(convId) {
@@ -122,11 +208,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function syncSessionState() {
     const activeConvId = getConversationId();
     if (activeConvId && activeConvId !== currentConvId) {
+      const isInitialBinding = !currentConvId;
       currentConvId = activeConvId;
       fullTranscriptTurns = [];
       currentNodes = [];
       lastKnownTurnCount = 0;
-      triggerSessionArrivalAnchor();
+      if (!isHovering() && !isInitialBinding) {
+        triggerSessionArrivalAnchor('session_switch');
+      }
       const menu = document.getElementById('agy-timeline-menu');
       if (menu) delete menu.dataset.renderedSignature;
       requestFullTurns(activeConvId);
@@ -329,6 +418,14 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
       const onHandleEnter = () => {
         isHoveringHandle = true;
+        // 用户悬停手柄，取消任何未完成的到达守护与滚动动画，保证主视口位移严格恒为 0
+        cancelScrollAnimation();
+        sessionArrivalPending = false;
+        if (arrivalAnchorRaf) {
+          cancelAnimationFrame(arrivalAnchorRaf);
+          arrivalAnchorRaf = null;
+        }
+
         if (hideTimer) {
           clearTimeout(hideTimer);
           hideTimer = null;
@@ -418,6 +515,13 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;
+    }
+    // 菜单展开交互期间，主视口必须保持绝对静止（位移为 0 铁律）
+    sessionArrivalPending = false;
+    cancelScrollAnimation();
+    if (arrivalAnchorRaf) {
+      cancelAnimationFrame(arrivalAnchorRaf);
+      arrivalAnchorRaf = null;
     }
     const menu = ensureMenu();
     const handle = ensureHandle();
@@ -700,19 +804,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     // 场景 1：切换/进入新对话时，自动定位至最后一轮对话的刚开始（图 2 状态）
     if (sessionArrivalPending && !userInteractedWithScroll) {
-      const now = performance.now();
-      if (now > sessionArrivalDeadline) {
-        sessionArrivalPending = false;
-      } else {
-        const finalTop = computeTargetScrollTopForElement(viewport, lastCard);
-        const isNearBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
-        const diff = Math.abs(viewport.scrollTop - finalTop);
-
-        // 如果视口被宿主自动推到底部，或初次加载偏差大于 10px，立即对齐到最后一轮提问头部
-        if (isNearBottom || diff > 10) {
-          viewport.scrollTop = finalTop;
-        }
-      }
+      checkAndApplyArrivalAnchor(viewport);
     }
 
     // 场景 2：在当前会话中产生新一轮对话（用户发送了新提问）
@@ -736,30 +828,40 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     lastKnownTurnCount = currentCount;
   }
 
-  // 12. Passive Viewport Tracking
+  // 12. Passive Viewport Tracking & Scroll Controller
   /** @type {HTMLElement | null} */
   let trackedViewport = null;
 
   function setupScrollController(viewport) {
-    if (trackedViewport === viewport) return;
+    if (!viewport || (trackedViewport === viewport && viewport.isConnected)) return;
     trackedViewport = viewport;
 
-    const onUserInteraction = () => {
+    // 仅在真实的手动滚动动作（滚轮、触摸手势、方向键）时解除自动锚定与锁定
+    const onManualScrollInteraction = () => {
       cancelScrollAnimation();
       userInteractedWithScroll = true;
       sessionArrivalPending = false;
       streamLockActive = false;
+      if (arrivalAnchorRaf) {
+        cancelAnimationFrame(arrivalAnchorRaf);
+        arrivalAnchorRaf = null;
+      }
     };
-    viewport.addEventListener('wheel', onUserInteraction, { passive: true });
-    viewport.addEventListener('touchstart', onUserInteraction, { passive: true });
-    viewport.addEventListener('pointerdown', onUserInteraction, { passive: true });
+
+    viewport.addEventListener('wheel', onManualScrollInteraction, { passive: true });
+    viewport.addEventListener('touchstart', onManualScrollInteraction, { passive: true });
     window.addEventListener('keydown', (e) => {
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) {
-        onUserInteraction();
+        onManualScrollInteraction();
       }
     }, { passive: true });
 
     viewport.addEventListener('scroll', () => {
+      // 在会话切换到达守护期间，若检测到宿主强行滚底或偏离卡片，立即纠正
+      if (sessionArrivalPending && !userInteractedWithScroll) {
+        checkAndApplyArrivalAnchor(viewport);
+      }
+
       if (currentNodes.length === 0) return;
       updateActiveNode(currentNodes, viewport);
       const menu = document.getElementById('agy-timeline-menu');
@@ -796,14 +898,17 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
   }
 
-  // 14. Scoped MutationObserver
+  // 14. Global MutationObserver (Observing Body to survive viewport destruction on SPA navigation)
   let updateDebounceTimer = null;
-  const initialViewport = getViewport();
 
   const domObserver = new MutationObserver(() => {
     const vp = getViewport();
-    if (vp) {
-      checkAndApplyViewAnchoring(vp);
+    if (vp && vp !== trackedViewport) {
+      setupScrollController(vp);
+    }
+    syncSessionState();
+    if (vp && sessionArrivalPending && !userInteractedWithScroll) {
+      checkAndApplyArrivalAnchor(vp);
     }
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);
     updateDebounceTimer = setTimeout(() => {
@@ -811,12 +916,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 400);
   });
 
-  if (initialViewport) {
-    setupScrollController(initialViewport);
-    domObserver.observe(initialViewport, { childList: true, subtree: true });
-  } else {
-    domObserver.observe(document.body, { childList: true, subtree: true });
-  }
+  domObserver.observe(document.body, { childList: true, subtree: true });
 
   // 15. Global Safety Watchdog & Auto-Dismiss System
   // 15.1 Click Outside to instantly dismiss
@@ -896,6 +996,16 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }, 60);
   };
 
+  // 15.6 Sidebar Row Click Instant Arrival Trigger
+  const onSidebarRowClick = (e) => {
+    const target = /** @type {HTMLElement | null} */ (e.target);
+    const row = target?.closest('[data-testid="conversation-row-sidebar"], a[href*="/c/"]');
+    if (row) {
+      triggerSessionArrivalAnchor();
+    }
+  };
+  document.addEventListener('click', onSidebarRowClick, { capture: true, passive: true });
+
   const onPopState = () => {
     if (syncSessionState()) {
       renderUI();
@@ -910,6 +1020,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // 16. Global Cleanup handler
   window.__agyTimelineCleanup = () => {
     cancelScrollAnimation();
+    if (arrivalAnchorRaf) cancelAnimationFrame(arrivalAnchorRaf);
     if (hoverIntentTimer) clearTimeout(hoverIntentTimer);
     if (hideTimer) clearTimeout(hideTimer);
     domObserver.disconnect();
@@ -917,6 +1028,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     window.removeEventListener('keydown', onGlobalKeyDown);
     window.removeEventListener('blur', onWindowBlur);
     document.removeEventListener('pointermove', onGlobalPointerMove);
+    document.removeEventListener('click', onSidebarRowClick, { capture: true });
     window.removeEventListener('popstate', onPopState);
     window.removeEventListener('hashchange', onPopState);
     history.pushState = originalPushState;

@@ -95,11 +95,22 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
-  // 同步全量 transcript 轮次数据至客户端
-  const pathnameRes = await sendCdp('Runtime.evaluate', { expression: 'window.location.pathname', returnByValue: true });
-  const convMatch = (pathnameRes?.result?.value || '').match(/\/c\/([a-f0-9\-]+)/);
-  if (convMatch) {
-    const convId = convMatch[1];
+  // 同步全量 transcript 轮次数据至客户端（多级会话探测）
+  const convIdRes = await sendCdp('Runtime.evaluate', {
+    expression: `(() => {
+      const view = document.querySelector('[data-testid="conversation-view"]');
+      const cid = view ? view.getAttribute('data-cascade-id') : null;
+      if (cid && /^[a-f0-9\\-]+$/i.test(cid)) return cid;
+      const sel = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
+      const sid = sel ? sel.getAttribute('data-cascade-id') : null;
+      if (sid && /^[a-f0-9\\-]+$/i.test(sid)) return sid;
+      const match = window.location.pathname.match(/\\/c\\/([a-f0-9\\-]+)/i);
+      return match ? match[1] : '';
+    })()`,
+    returnByValue: true
+  });
+  const convId = convIdRes?.result?.value;
+  if (convId) {
     const transPath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
     if (existsSync(transPath)) {
       const raw = await readFile(transPath, 'utf8');
