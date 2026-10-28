@@ -28,7 +28,7 @@ async function getDevToolsPort() {
 }
 
 async function runE2ETest() {
-  console.log('=== [1/5] 读取与装配 client/ 源码模块 ===');
+  console.log('=== [1/6] 读取与装配 client/ 源码模块 ===');
   const clientDir = join(__dirname, 'client');
   const styles = await readFile(join(clientDir, 'styles.css'), 'utf8');
   const i18n = await readFile(join(clientDir, 'i18n.js'), 'utf8');
@@ -48,7 +48,7 @@ async function runE2ETest() {
 
   console.log('装配成功，生成的自执行脚本长度:', bundled.length, '字符');
 
-  console.log('\n=== [2/5] 探测 CDP 调试端口并建立调试会话 ===');
+  console.log('\n=== [2/6] 探测 CDP 调试端口并建立调试会话 ===');
   const port = await getDevToolsPort();
   if (!port) {
     throw new Error('未检测到 Antigravity 调试端口文件 (DevToolsActivePort)');
@@ -85,7 +85,7 @@ async function runE2ETest() {
 
   await sendCdp('Runtime.enable');
 
-  console.log('\n=== [3/5] 执行热注入评估 (Runtime.evaluate) ===');
+  console.log('\n=== [3/6] 执行热注入评估 (Runtime.evaluate) ===');
   const evalRes = await sendCdp('Runtime.evaluate', {
     expression: bundled,
     returnByValue: true
@@ -142,7 +142,7 @@ async function runE2ETest() {
     }
   }
 
-  console.log('\n=== [4/5] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
+  console.log('\n=== [4/6] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(async () => {
       const styleEl = document.getElementById('agy-timeline-styles');
@@ -199,7 +199,7 @@ async function runE2ETest() {
     throw new Error('菜单未正确挂载会话内容特征签名');
   }
 
-  console.log('\n=== [5/5] 验证列表中点击条目平滑定位与光晕脉冲 ===');
+  console.log('\n=== [5/6] 验证列表中点击条目平滑定位与光晕脉冲 ===');
   const clickCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const targetCard = document.querySelector('.agy-turn-card:not(.is-folded)') ||
@@ -216,6 +216,65 @@ async function runE2ETest() {
     returnByValue: true
   });
   console.log('条目点击定位触发结果:', JSON.stringify(clickCheck?.result?.value, null, 2));
+
+  console.log('\n=== [6/6] 验证防回弹与防误判回归门禁（末轮跳转非末轮 / 历史展开防误判 / 引用胶囊纯净提取） ===');
+  const regressionCheck = await sendCdp('Runtime.evaluate', {
+    expression: `(async () => {
+      // 1. 验证引用气泡胶囊与纯净提问提取机制（杜绝折叠状态误判）
+      const mockCard = document.createElement('div');
+      mockCard.className = 'group/user-input-step pt-4';
+      mockCard.innerHTML = \`
+        <div class="whitespace-pre-wrap">
+          <span class="context-scope-mention" data-quotable-inline="true">
+            <span class="inline-pill">引用内容：微软与谷歌的数据中心建设...</span>
+          </span>
+          请问具体的商业落地案例有哪些？
+        </div>
+      \`;
+      document.body.appendChild(mockCard);
+      
+      const quotable = mockCard.querySelector('.whitespace-pre-wrap');
+      const clone = quotable.cloneNode(true);
+      clone.querySelectorAll('.context-scope-mention, [data-uri], [class*="inline-pill"]').forEach(el => el.remove());
+      const cleanResult = (clone.textContent || '').trim();
+      const cleanTextExtracted = (cleanResult === '请问具体的商业落地案例有哪些？');
+      mockCard.remove();
+
+      // 2. 验证主动导航状态与末尾卡片特征签名机制
+      const vp = document.querySelector('[data-testid="autoscroll-viewport"]') ||
+                 document.querySelector('.isolate.overflow-y-auto') ||
+                 document.querySelector('.overflow-y-auto.min-h-0.w-full');
+      const menu = document.getElementById('agy-timeline-menu');
+      const cards = menu ? Array.from(menu.querySelectorAll('.agy-turn-card')) : [];
+
+      let noBottomRebound = true;
+      if (cards.length > 1 && vp) {
+        vp.scrollTop = vp.scrollHeight;
+        const initialBottom = vp.scrollTop;
+        const targetTurn = cards[cards.length - 2];
+        targetTurn.click();
+        await new Promise(r => setTimeout(r, 350));
+        noBottomRebound = (vp.scrollTop < initialBottom);
+      }
+
+      return {
+        cleanTextExtracted,
+        noBottomRebound,
+        regressionProtected: cleanTextExtracted && noBottomRebound
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+
+  const regRes = regressionCheck?.result?.value;
+  console.log('回归门禁硬性校验结果:', JSON.stringify(regRes, null, 2));
+  if (!regRes?.cleanTextExtracted) {
+    throw new Error('引用胶囊纯净提问文本剥离失败');
+  }
+  if (!regRes?.noBottomRebound) {
+    throw new Error('检测到非末轮跳转被强推回末轮的异常回弹');
+  }
 
   // 验证点击外部或完成定位后菜单自动关闭收起
   await sendCdp('Runtime.evaluate', {

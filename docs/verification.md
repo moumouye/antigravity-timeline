@@ -17,17 +17,18 @@ uv run manage.py test
 
 ---
 
-## 2. 五大验收环节与硬性断言标准 (Hard Assertions)
+## 2. 六大验收环节与硬性断言标准 (Hard Assertions)
 
-测试脚本 [`sidecars/engine/test_e2e.mjs`](../sidecars/engine/test_e2e.mjs) 通过 CDP 直连运行中的 Antigravity 实例，自动执行以下五大阶段校验：
+测试脚本 [`sidecars/engine/test_e2e.mjs`](../sidecars/engine/test_e2e.mjs) 通过 CDP 直连运行中的 Antigravity 实例，自动执行以下六大阶段校验：
 
 | 校验阶段 | 阶段任务 | 硬性断言指标 (Hard Assertions) | 判定通过标准 |
 | :--- | :--- | :--- | :--- |
-| **[1/5] 源码装配** | 读取并编译 `client/` 下的 CSS、i18n 与 JS | 语法无报错，生成完整的 IIFE 自执行脚本 | 脚本长度正常，无语法解析异常 |
-| **[2/5] 端口与会话** | 读取 `DevToolsActivePort` 并建立 WebSocket | 成功连接至目标 Electron 页面窗口 | 建立有效 WebSocket CDP 连接 |
-| **[3/5] 热注入评估** | 调用 `Runtime.evaluate` 执行脚本注入 | `evalRes.exceptionDetails` 必须为空 | 注入无运行时报错 |
-| **[4/5] 悬停静止与全量对齐** | 模拟悬停手柄，展开菜单 | 1. `viewportScrollDelta === 0`<br>2. `totalTurnsInMenu === transcriptTurns.length`<br>3. `hasResidualFloatBtn === false`<br>4. `hasActiveCard === true` | **主视口位移严格为 0 像素**，菜单条目数与底层日志完全相等，无旧按钮残留 |
-| **[5/5] 定向跳转与光晕脉冲** | 模拟点击未折叠卡片触发平滑定位 | 1. `cardClicked === true`<br>2. `jumpHighlightFired === true` | 成功触发平滑定位，并激活目标卡片 1.4 秒专属脉冲光晕 |
+| **[1/6] 源码装配** | 读取并编译 `client/` 下的 CSS、i18n 与 JS | 语法无报错，生成完整的 IIFE 自执行脚本 | 脚本长度正常，无语法解析异常 |
+| **[2/6] 端口与会话** | 读取 `DevToolsActivePort` 并建立 WebSocket | 成功连接至目标 Electron 页面窗口 | 建立有效 WebSocket CDP 连接 |
+| **[3/6] 热注入评估** | 调用 `Runtime.evaluate` 执行脚本注入 | `evalRes.exceptionDetails` 必须为空 | 注入无运行时报错 |
+| **[4/6] 悬停静止与全量对齐** | 模拟悬停手柄，展开菜单 | 1. `viewportScrollDelta === 0`<br>2. `totalTurnsInMenu === transcriptTurns.length`<br>3. `hasResidualFloatBtn === false`<br>4. `hasActiveCard === true` | **主视口位移严格为 0 像素**，菜单条目数与底层日志完全相等，无旧按钮残留 |
+| **[5/6] 定向跳转与光晕脉冲** | 模拟点击未折叠卡片触发平滑定位 | 1. `cardClicked === true`<br>2. `jumpHighlightFired === true` | 成功触发平滑定位，并激活目标卡片 1.4 秒专属脉冲光晕 |
+| **[6/6] 防回弹与防误判门禁** | 校验引用胶囊提取与末轮跳转防回弹 | 1. `cleanTextExtracted === true`<br>2. `noBottomRebound === true`<br>3. `regressionProtected === true` | 胶囊纯净剥离，非末轮跳转杜绝被强推回末轮 |
 
 ---
 
