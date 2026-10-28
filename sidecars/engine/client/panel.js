@@ -674,7 +674,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (isAtBottom || !activeCard) {
         listEl.scrollTop = listEl.scrollHeight;
       } else {
-        activeCard.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const cardTop = activeCard.offsetTop;
+        listEl.scrollTop = Math.max(0, cardTop - listEl.clientHeight / 2 + activeCard.clientHeight / 2);
       }
     };
 
@@ -794,7 +795,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const currentScrollTop = viewport.scrollTop;
 
     const relativeOffset = elRect.top - vpRect.top;
-    const targetScrollTop = currentScrollTop + relativeOffset - 24;
+    const targetScrollTop = currentScrollTop + relativeOffset;
 
     const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
     return Math.max(0, Math.min(maxScroll, targetScrollTop));
@@ -803,14 +804,6 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function scrollToElement(viewport, element) {
     const finalTop = computeTargetScrollTopForElement(viewport, element);
     smoothScrollTo(viewport, finalTop, 220);
-
-    element.classList.remove('agy-timeline-target-highlight');
-    void element.offsetWidth; // Trigger reflow
-    element.classList.add('agy-timeline-target-highlight');
-
-    setTimeout(() => {
-      element.classList.remove('agy-timeline-target-highlight');
-    }, 1500);
   }
 
   /**

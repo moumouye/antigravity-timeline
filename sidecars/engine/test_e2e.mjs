@@ -199,7 +199,7 @@ async function runE2ETest() {
     throw new Error('菜单未正确挂载会话内容特征签名');
   }
 
-  console.log('\n=== [5/6] 验证列表中点击条目平滑定位与光晕脉冲 ===');
+  console.log('\n=== [5/6] 验证列表中点击条目自然平滑定位（零光晕干扰） ===');
   const clickCheck = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const targetCard = document.querySelector('.agy-turn-card:not(.is-folded)') ||
@@ -210,12 +210,18 @@ async function runE2ETest() {
       const highlighted = document.querySelector('.agy-timeline-target-highlight');
       return {
         cardClicked: !!targetCard,
-        jumpHighlightFired: !!highlighted
+        noHighlightPollution: !highlighted
       };
     })()`,
     returnByValue: true
   });
   console.log('条目点击定位触发结果:', JSON.stringify(clickCheck?.result?.value, null, 2));
+  if (!clickCheck?.result?.value?.cardClicked) {
+    throw new Error('菜单卡片点击失败');
+  }
+  if (!clickCheck?.result?.value?.noHighlightPollution) {
+    throw new Error('检测到残留的绿色呼吸灯高亮类名污染');
+  }
 
   console.log('\n=== [6/6] 验证防回弹与防误判回归门禁（末轮跳转非末轮 / 历史展开防误判 / 引用胶囊纯净提取） ===');
   const regressionCheck = await sendCdp('Runtime.evaluate', {
@@ -245,13 +251,13 @@ async function runE2ETest() {
                  document.querySelector('.isolate.overflow-y-auto') ||
                  document.querySelector('.overflow-y-auto.min-h-0.w-full');
       const menu = document.getElementById('agy-timeline-menu');
-      const cards = menu ? Array.from(menu.querySelectorAll('.agy-turn-card')) : [];
+      const mountedCards = menu ? Array.from(menu.querySelectorAll('.agy-turn-card:not(.is-folded)')) : [];
 
       let noBottomRebound = true;
-      if (cards.length > 1 && vp) {
+      if (mountedCards.length > 1 && vp) {
         vp.scrollTop = vp.scrollHeight;
         const initialBottom = vp.scrollTop;
-        const targetTurn = cards[cards.length - 2];
+        const targetTurn = mountedCards[0];
         targetTurn.click();
         await new Promise(r => setTimeout(r, 350));
         noBottomRebound = (vp.scrollTop < initialBottom);

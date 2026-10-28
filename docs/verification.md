@@ -89,7 +89,7 @@ flowchart TD
 | **[2/6] 端口与会话** | CDP 调试通道 | 读取动态端口并建立 WebSocket 通信 | 成功接入 Electron 目标窗口 |
 | **[3/6] 热注入评估** | 渲染进程上下文 | `Runtime.evaluate` 注入自执行代码 | 运行时 `exceptionDetails` 严格为空 |
 | **[4/6] 悬停静止与对齐** | 手柄交互与菜单展示 | 1. `viewportScrollDelta === 0`<br>2. `totalTurnsInMenu === transcriptTurns.length`<br>3. `hasResidualFloatBtn === false`<br>4. `hasActiveCard === true` | **主视口位移严格为 0 像素**，菜单条目与底层日志完全相等，无旧按钮残留 |
-| **[5/6] 定向跳转与光晕** | 显式点击定位 | 1. `cardClicked === true`<br>2. `jumpHighlightFired === true` | 触发平滑定位并激活 1.4s 专属脉冲光晕 |
+| **[5/6] 自然平滑定向跳转** | 显式点击定位 | 1. `cardClicked === true`<br>2. `noHighlightPollution === true` | 触发平滑定位，无任何多余绿色光晕样式污染，零贴合精准对齐 |
 | **[6/6] 防回弹与防误判门禁** | 稳态轨迹与脏数据解析 | 1. `cleanTextExtracted === true`<br>2. `noBottomRebound === true`<br>3. `regressionProtected === true` | 引用胶囊纯净剥离，非末轮跳转杜绝被强推回末轮 |
 
 ---
