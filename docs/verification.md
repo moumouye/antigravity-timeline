@@ -1,13 +1,30 @@
 # ④ 质量工程与验收准则 (Quality Standards & Invariant Gate)
 
-本文档确立系统的自动化测试哲学、不可违背的四大物理不变量与交付质量验收准则。
+本文档确立系统的自动化测试哲学、不可违背的四大物理不变量、分层裁决经济学与测试标准的持续演进机制。
 本项目全面践行 **“准则与不变量驱动（Invariant-Driven）”**，彻底摒弃死板教条的操作流水账，赋予测试套件自主进化与深度对抗的灵活性。
 
 所有代码变更提交前，**必须本地运行并通过自动化测试门禁（退出码 0）**。
 
 ---
 
-## 1. 唯一指定测试门禁 (Execution Command)
+## 1. 测试分层与经济学裁决准则 (Testing Layering & Pragmatic Economics)
+
+软件测试的终极目的，不是在数学上证明“系统绝对没有 Bug”，而是**以最小的维护成本换取最大的重构安全感**。
+本项目严禁形式主义的“全量覆盖”，严格按分层裁决模型分配精力：
+
+```mermaid
+flowchart TD
+    subgraph TestingTrophy ["🏆 分层裁决模型 (The Pragmatic Testing Model)"]
+        L1["<b>① 核心物理红线与视口端到端 (E2E Smoke / 20%)</b><br/>• 范围：手柄悬停 0 像素位移、折叠展开平滑定位、非末轮跳转 0 回弹<br/>• 手段：CDP 直连真实运行环境黑盒验证，死守用户体验底线"]
+        L2["<b>② 跨系统集成与协议契约 (Integration / 50%)</b><br/>• 范围：Sidecar 日志解析推送、CDP 双向绑定、会话 ID 级联探测<br/>• 手段：灰盒协议通信断言，确保全链路数据流转管道畅通"]
+        L3["<b>③ 纯算法与文本清洗单测 (Unit / 30%)</b><br/>• 范围：引用气泡胶囊剥离 (extractCardText)、坐标计算 (computeTargetScrollTop)<br/>• 手段：毫秒级纯函数白盒单测，快速覆盖复杂正则与算法边界"]
+        L4["<b>🚫 纯视觉与微调：严禁编写自动化测试 (0%)</b><br/>• 范围：边框圆角、阴影透明度、颜色微调等纯样式变动<br/>• 裁决：人工肉眼审查即可，坚决不写易碎断言，避免沉重维护债务"]
+    end
+```
+
+---
+
+## 2. 唯一指定测试门禁 (Execution Command)
 
 ```bash
 uv run manage.py test
@@ -19,7 +36,7 @@ uv run manage.py test
 
 ---
 
-## 2. 四大核心质量准则与不可违背的物理不变量 (The 4 Quality Invariants)
+## 3. 四大核心质量准则与不可违背的物理不变量 (The 4 Quality Invariants)
 
 测试脚本的具体代码实现与用例编排不设刻板限制，但测试套件必须严格满足以下四大刚性物理不变量：
 
@@ -62,7 +79,7 @@ flowchart TD
 
 ---
 
-## 3. 验收断言参考清单 (Assertion Reference)
+## 4. 验收断言参考清单 (Assertion Reference)
 
 当前官方端到端测试脚本 [`sidecars/engine/test_e2e.mjs`](../sidecars/engine/test_e2e.mjs) 围绕上述不变量实施的六大核心断言：
 
@@ -77,7 +94,34 @@ flowchart TD
 
 ---
 
-## 4. 常见物理不变量破坏排查指南 (Troubleshooting)
+## 5. 测试标准的生命周期与持续重估机制 (Living Standards & Continuous Re-evaluation)
+
+测试标准绝非刻在石头上的死板教条，它随系统演进而动态进化。系统在以下三个关键契机**无条件触发测试标准的重新评估与重构升级**：
+
+```mermaid
+flowchart LR
+    E1["<b>契机 A：缺陷逆向追肥</b><br/>(Bug-to-Test Evolution)<br/>线上漏测 Bug 必反思补桩"]
+    E2["<b>契机 B：架构重大演进</b><br/>(Architecture Recalibration)<br/>新协议/新机制引入新不变量"]
+    E3["<b>契机 C：抗脆弱降噪剪枝</b><br/>(Flakiness Pruning)<br/>剔除高脆弱性假报错与测试债务"]
+
+    E1 --> Living["🌱 活体测试标准库 (Evolving Gate)"]
+    E2 --> Living
+    E3 --> Living
+```
+
+1. **缺陷逆向追肥机制（Bug-to-Test Pipeline）**：
+   - 凡是在日常使用或生产中暴露了新 Bug，首要复盘问题永远是：**“为什么现有的测试门禁漏掉了这个场景？”**；
+   - 修复缺陷的同时，必须在 [`docs/anti-patterns.md`](anti-patterns.md) 确立新反模式，并向测试套件中追加反向断言，将该 Bug 终身锁定；
+2. **架构同步重估机制（Architecture-Synchronized Recalibration）**：
+   - 当系统引入重大架构升级（如由传统轮询升级为全量 CDP 直通、引入多源级联会话探测时），测试标准必须同步重估；
+   - 淘汰与旧架构强绑定的低层实现测试，升级为针对新架构核心承诺的行为断言；
+3. **抗脆弱降噪剪枝机制（Flakiness Pruning & Debt Reduction）**：
+   - 若某项测试断言经常因宿主无害的样式名微调而产生假阳性（False Alarm），则证明该断言陷入了“死板流程”，属于脆弱测试；
+   - 必须立即对该断言进行重估剪枝，将其升维为不依赖具体类名的“物理几何与行为不变量断言”，确保测试运行极速、精准、高信噪比。
+
+---
+
+## 6. 常见物理不变量破坏排查指南 (Troubleshooting)
 
 若测试运行报错，参照下表排查物理不变量破坏原因：
 
