@@ -17,6 +17,7 @@
 | **AP-07** | **零防抖悬停与整屏伪元素桥接** | 鼠标划过屏幕右侧即误弹大菜单，且移开后无法自动关闭。 | 无 Hover Intent 防抖导致 1ms 划过即弹出，72vh 高度的透明 `::after` 桥接伪元素侵占视口热区，且缺失全局失焦与外部点击关闭。 | **意图防抖与安全看门狗**：手柄 110ms 意图防抖；收敛伪元素桥接；挂载 Click Outside、ESC、Window Blur 与全局坐标看门狗。 |
 | **AP-08** | **单点绑定局部视口容器与固定死时限守护** | 点击切换新会话后，多数会话依然被宿主强推到对话末尾/最底部。 | SPA 切换时宿主销毁旧视口 DOM 导致局部 Observer 永久失灵脱管；固定 2.2 秒死延时在长会话异步渲染时提前超时，未能阻断宿主后续的延迟 autoscroll。 | **Body 级生命周期感应与动态就绪收敛**：全局 `document.body` 级 Observer 穿透感应新视口并即时绑定；结合卡片就绪感应与 1800ms 平息收敛守护。 |
 | **AP-09** | **会话 ID 探测单纯依赖 URL pathname** | 侧边栏点击切换会话时插件完全失感，锚定机制与数据拉取不触发。 | Electron 桌面宿主中路由采用内存 History，`window.location.pathname` 绝大多数时候恒为 `"/"`。 | **多源级联探测**：以 `[data-cascade-id]`（视图容器与侧边栏选中行）为首要真理，结合正则提取级联兜底。 |
+| **AP-10** | **凭挂载卡片总数判定新提问 & 主动跳转未解绑视口锁定** | 1. 处于末轮点击其他轮次无效；<br>2. 处于倒数第二轮点击跳转倒数第三轮时被强推回末轮。 | 展开顶部折叠历史导致 `userCards.length` 变大，被粗暴误判为“用户发送了新提问”并强推到底部 `lastCard`；同时点击跳转未解除 `sessionArrivalPending` 与 `streamLockActive`，且 DOM 卡片中附带引用胶囊导致折叠状态失配。 | **末尾卡片特征指纹比对 + 主动导航全量解绑 + 胶囊剥离纯净匹配**：仅在末尾卡片内容实质改变时触发新提问锚定；点击跳转即刻标记 `isNavigatingTurn = true` 并解除守护锁定；剥离 DOM 引用胶囊进行双向前缀匹配与倒序序数对齐。 |
 
 ---
 
@@ -46,3 +47,9 @@ Antigravity 客户端在切换会话时，旧的 `autoscroll-viewport` DOM 容�
 
 ### AP-09：为什么会话 ID 探测不能单纯依赖 window.location.pathname？
 在 Antigravity 宿主 Electron 容器内，侧边栏点击切换会话主要依托 React Router 的内部状态流转，大部分时候 `window.location.pathname` 始终恒定保持为 `"/"`，不会同步更新为 `/c/<id>`。若仅凭 `pathname` 提取会话，绝大多数会话中获取到的均为空字符串，导致无法向 Sidecar 拉取全量轮次，也无法及时触发到达守护控制器。必须以 `[data-testid="conversation-view"]` 及侧边栏激活行上的 `data-cascade-id` 属性作为首要来源，辅以正则级联兜底。
+
+### AP-10：为什么绝不能仅凭 DOM 卡片数量判定新提问？
+在 React 虚拟化长列表中，Antigravity 默认仅渲染离开视口最近的 2~3 轮对话，较早历史被折叠在顶部的 `Load older messages` 按钮后。
+当用户在时间线中点击较早轮次时，插件会按需触发 `loadBtn.click()`。此时早期消息被插入在视口**顶部**，导致 DOM 中的卡片总数（`userCards.length`）从 2 轮激增至 4 轮或更多。
+若代码仅通过 `currentCount > lastKnownTurnCount` 判定“是否有新提问”，就会将“展开历史”灾难性地误判为“用户发送了新提问”，从而立刻执行 `scrollToElement(viewport, lastCard)` 将视口粗暴拽回最底部的末轮！
+同理，用户主动点击时间线属于明确的人工意图导航，必须即刻撤销 `sessionArrivalPending` 与 `streamLockActive`，并以 `isNavigatingTurn` 阻断一切后台 autoscroll 看门狗；在文本匹配层面，必须剥离 `.context-scope-mention` 等引用胶囊以恢复纯净提问，并结合前后双向包含匹配与倒序序数对齐，彻底消除折叠状态误判与多重死锁。

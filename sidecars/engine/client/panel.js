@@ -119,10 +119,13 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let sessionArrivalStartTime = performance.now();
   let firstAlignedTime = 0;
   let lastKnownTurnCount = 0;
+  let lastKnownBottomPrompt = '';
+  let isNavigatingTurn = false;
   let streamLockActive = false;
   let arrivalAnchorRaf = null;
 
   function triggerSessionArrivalAnchor(reason = 'session_switch') {
+    if (isNavigatingTurn) return;
     sessionArrivalPending = true;
     userInteractedWithScroll = false;
     sessionArrivalStartTime = performance.now();
@@ -137,7 +140,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   function checkAndApplyArrivalAnchor(viewport) {
-    if (!sessionArrivalPending || userInteractedWithScroll || !viewport) return;
+    if (!sessionArrivalPending || userInteractedWithScroll || isNavigatingTurn || !viewport) {
+      sessionArrivalPending = false;
+      return;
+    }
 
     setupScrollController(viewport);
     const now = performance.now();
@@ -213,7 +219,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       fullTranscriptTurns = [];
       currentNodes = [];
       lastKnownTurnCount = 0;
-      if (!isHovering() && !isInitialBinding) {
+      lastKnownBottomPrompt = '';
+      if (!isHovering() && !isInitialBinding && !isNavigatingTurn) {
         triggerSessionArrivalAnchor('session_switch');
       }
       const menu = document.getElementById('agy-timeline-menu');
@@ -261,6 +268,29 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }) || null;
   }
 
+  /**
+   * Extract clean text from a user card element, removing pills, quotes, and attachments
+   * @param {Element} card
+   */
+  function extractCardText(card) {
+    const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
+    const rawText = (quotable.textContent || '').trim();
+
+    let cleanText = rawText;
+    try {
+      const clone = quotable.cloneNode(true);
+      if (clone instanceof HTMLElement) {
+        clone.querySelectorAll('.context-scope-mention, [data-uri], [class*="inline-pill"]').forEach(el => el.remove());
+        cleanText = (clone.textContent || '').trim();
+      }
+    } catch {}
+
+    return {
+      raw: rawText,
+      clean: cleanText || rawText
+    };
+  }
+
   // 6. Scan and Reconcile Turns (Canonical Full Transcript + DOM Element Binding)
   /**
    * @returns {TimelineTurnNode[]}
@@ -290,22 +320,46 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       }));
 
       // Bind currently mounted DOM user cards
+      // Pass 1: Precise content matching (cleaning quote pills and attachments)
       userCards.forEach(card => {
-        const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
-        const cardRawText = (quotable.textContent || '').trim();
-        const cardNormText = normalizeTextForMatch(cardRawText);
-        if (!cardNormText) return;
+        const { raw: cardRawText, clean: cardCleanText } = extractCardText(card);
+        const cardNormClean = normalizeTextForMatch(cardCleanText);
+        const cardNormRaw = normalizeTextForMatch(cardRawText);
+        if (!cardNormClean && !cardNormRaw) return;
 
         const matchedNode = nodes.find(n => {
+          if (n.element) return false;
+
           const normClean = normalizeTextForMatch(n.cleanText || n.fullText || n.userText);
           const normUser = normalizeTextForMatch(n.userText);
           const normFull = normalizeTextForMatch(n.fullText);
 
-          return (
-            (normClean && (cardNormText.startsWith(normClean.slice(0, 25)) || normClean.startsWith(cardNormText.slice(0, 25)))) ||
-            (normUser && (cardNormText.startsWith(normUser.slice(0, 25)) || normUser.startsWith(cardNormText.slice(0, 25)))) ||
-            (normFull && (cardNormText.startsWith(normFull.slice(0, 25)) || normFull.startsWith(cardNormText.slice(0, 25))))
-          );
+          // 1. Clean DOM text starts with or includes transcript prompt
+          if (cardNormClean && normClean) {
+            const prefixClean = normClean.slice(0, 20);
+            const prefixCard = cardNormClean.slice(0, 20);
+            if (cardNormClean.startsWith(prefixClean) || normClean.startsWith(prefixCard) || cardNormClean.includes(prefixClean)) {
+              return true;
+            }
+          }
+
+          // 2. Clean DOM text with userText preview
+          if (cardNormClean && normUser) {
+            const prefixUser = normUser.slice(0, 20);
+            if (cardNormClean.startsWith(prefixUser) || normUser.startsWith(cardNormClean.slice(0, 20)) || cardNormClean.includes(prefixUser)) {
+              return true;
+            }
+          }
+
+          // 3. Fallback to raw text matching
+          if (cardNormRaw && (normClean || normFull)) {
+            const prefix = (normClean || normFull).slice(0, 20);
+            if (cardNormRaw.includes(prefix)) {
+              return true;
+            }
+          }
+
+          return false;
         });
 
         if (matchedNode) {
@@ -316,6 +370,38 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         }
       });
 
+      // Pass 2: Positional sequence alignment fallback
+      // In Antigravity's virtualized list, mounted cards are always a contiguous chronological suffix of turns
+      const mountedIndices = nodes.map((n, i) => n.element ? i : -1).filter(i => i >= 0);
+      if (mountedIndices.length > 0 && mountedIndices.length < userCards.length) {
+        const lastMatchedNodeIdx = mountedIndices[mountedIndices.length - 1];
+        const lastMatchedCardIdx = userCards.indexOf(/** @type {HTMLElement} */ (nodes[lastMatchedNodeIdx].element));
+        if (lastMatchedCardIdx >= 0) {
+          userCards.forEach((card, cIdx) => {
+            const offsetFromAnchor = cIdx - lastMatchedCardIdx;
+            const targetNodeIdx = lastMatchedNodeIdx + offsetFromAnchor;
+            if (targetNodeIdx >= 0 && targetNodeIdx < nodes.length && !nodes[targetNodeIdx].element) {
+              nodes[targetNodeIdx].element = /** @type {HTMLElement} */ (card);
+              nodes[targetNodeIdx].isFolded = false;
+              const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
+              nodes[targetNodeIdx].topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
+            }
+          });
+        }
+      } else if (mountedIndices.length === 0 && userCards.length > 0) {
+        const numToBind = Math.min(userCards.length, nodes.length);
+        for (let i = 0; i < numToBind; i++) {
+          const card = userCards[userCards.length - 1 - i];
+          const node = nodes[nodes.length - 1 - i];
+          if (card && node && !node.element) {
+            node.element = /** @type {HTMLElement} */ (card);
+            node.isFolded = false;
+            const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
+            node.topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
+          }
+        }
+      }
+
       return nodes;
     }
 
@@ -323,10 +409,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     /** @type {TimelineTurnNode[]} */
     const domNodes = [];
     userCards.forEach((card, idx) => {
-      const quotable = card.querySelector('[data-quotable]') || card.querySelector('.whitespace-pre-wrap') || card;
-      const fullText = (quotable.textContent || '').trim();
-      const normText = normalizeTextForMatch(fullText);
-      const firstLines = normText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
+      const { raw: fullText, clean: normText } = extractCardText(card);
+      const cleanNorm = normalizeTextForMatch(normText);
+      const firstLines = cleanNorm.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ') || `Turn #${idx + 1}`;
       const cleanPrompt = firstLines.length > 120 ? firstLines.slice(0, 118) + '...' : firstLines;
 
       let timeStr = '';
@@ -340,7 +425,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         index: idx + 1,
         userText: cleanPrompt,
         fullText,
-        cleanText: normText,
+        cleanText: cleanNorm,
         stepIndex: idx,
         responseText: '',
         timeStr,
@@ -421,6 +506,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
         // 用户悬停手柄，取消任何未完成的到达守护与滚动动画，保证主视口位移严格恒为 0
         cancelScrollAnimation();
         sessionArrivalPending = false;
+        streamLockActive = false;
+        userInteractedWithScroll = true;
         if (arrivalAnchorRaf) {
           cancelAnimationFrame(arrivalAnchorRaf);
           arrivalAnchorRaf = null;
@@ -518,6 +605,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
     // 菜单展开交互期间，主视口必须保持绝对静止（位移为 0 铁律）
     sessionArrivalPending = false;
+    streamLockActive = false;
+    userInteractedWithScroll = true;
     cancelScrollAnimation();
     if (arrivalAnchorRaf) {
       cancelAnimationFrame(arrivalAnchorRaf);
@@ -638,7 +727,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
           card.addEventListener('click', async (e) => {
             e.stopPropagation();
             await jumpToTurn(node);
-            scheduleHideMenu();
+            scheduleHideMenu(300);
           });
 
           newListEl.appendChild(card);
@@ -732,22 +821,40 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const viewport = getViewport();
     if (!viewport) return;
 
+    // 1. 立即解除任何被动滚动守护与流式锁定，标记用户已发起明确的主动定位
+    isNavigatingTurn = true;
+    userInteractedWithScroll = true;
+    sessionArrivalPending = false;
+    streamLockActive = false;
+    if (arrivalAnchorRaf) {
+      cancelAnimationFrame(arrivalAnchorRaf);
+      arrivalAnchorRaf = null;
+    }
+    cancelScrollAnimation();
+
+    // 重新扫描最新 DOM 节点，校准元素引用
+    currentNodes = scanTurns();
+    let targetNode = currentNodes.find(n => n.index === node.index) || node;
+
     // Case 1: Already mounted in DOM
-    if (node.element && node.element.isConnected) {
-      scrollToElement(viewport, node.element);
+    if (targetNode.element && targetNode.element.isConnected) {
+      scrollToElement(viewport, targetNode.element);
+      setTimeout(() => {
+        isNavigatingTurn = false;
+      }, 300);
       return;
     }
 
     // Case 2: Folded earlier turn -> User explicitly clicked, expand history on-demand
     const menu = document.getElementById('agy-timeline-menu');
-    const cardEl = menu?.querySelector(`[data-turn-idx="${node.index}"]`);
+    const cardEl = menu?.querySelector(`[data-turn-idx="${targetNode.index}"]`);
     if (cardEl) {
       cardEl.classList.add('is-loading');
       const promptEl = cardEl.querySelector('.agy-turn-prompt');
-      if (promptEl) promptEl.textContent = `⏳ 正在展开并定位第 ${node.index} 轮...`;
+      if (promptEl) promptEl.textContent = `⏳ 正在展开并定位第 ${targetNode.index} 轮...`;
     }
 
-    const waitForDomMutation = (timeoutMs = 180) => {
+    const waitForDomMutation = (timeoutMs = 200) => {
       return new Promise(resolve => {
         let timer = null;
         const observer = new MutationObserver(() => {
@@ -765,23 +872,23 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     };
 
     let attempts = 0;
-    while (attempts < 8) {
+    while (attempts < 15) {
       attempts++;
       const loadBtn = findLoadOlderBtn();
       if (!loadBtn || loadBtn.disabled) break;
       loadBtn.click();
-      await waitForDomMutation(180);
+      await waitForDomMutation(200);
 
       currentNodes = scanTurns();
-      const updatedNode = currentNodes.find(n => n.index === node.index);
+      const updatedNode = currentNodes.find(n => n.index === targetNode.index);
       if (updatedNode && updatedNode.element && updatedNode.element.isConnected) {
-        node = updatedNode;
+        targetNode = updatedNode;
         break;
       }
     }
 
     currentNodes = scanTurns();
-    const finalNode = currentNodes.find(n => n.index === node.index);
+    const finalNode = currentNodes.find(n => n.index === targetNode.index) || targetNode;
     if (finalNode && finalNode.element && finalNode.element.isConnected) {
       scrollToElement(viewport, finalNode.element);
     }
@@ -789,26 +896,39 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (cardEl) {
       cardEl.classList.remove('is-loading');
       const promptEl = cardEl.querySelector('.agy-turn-prompt');
-      if (promptEl) promptEl.textContent = node.userText;
+      if (promptEl) promptEl.textContent = targetNode.userText;
     }
+
+    setTimeout(() => {
+      isNavigatingTurn = false;
+    }, 300);
   }
 
   // 11. Smart Turn Anchoring Controller (Session Switch Arrival & New Turn Lock)
   function checkAndApplyViewAnchoring(viewport) {
-    if (!viewport) return;
+    if (!viewport || isNavigatingTurn) return;
     const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
     if (userCards.length === 0) return;
 
     const currentCount = userCards.length;
     const lastCard = userCards[currentCount - 1];
+    const { clean: currentLastText } = extractCardText(lastCard);
+    const currentBottomPromptSig = normalizeTextForMatch(currentLastText);
 
     // 场景 1：切换/进入新对话时，自动定位至最后一轮对话的刚开始（图 2 状态）
-    if (sessionArrivalPending && !userInteractedWithScroll) {
+    if (sessionArrivalPending && !userInteractedWithScroll && !isNavigatingTurn) {
       checkAndApplyArrivalAnchor(viewport);
     }
 
     // 场景 2：在当前会话中产生新一轮对话（用户发送了新提问）
-    if (lastKnownTurnCount > 0 && currentCount > lastKnownTurnCount) {
+    // 关键修复：绝不能仅凭 userCards.length 增大就判定为新提问！展开历史折叠消息时 DOM 节点数量同样会增加。
+    // 必须判定末尾卡片提问内容发生实质改变（真正的新提问产生），且当前不处于主动导航跳转中。
+    const isNewUserPromptSent = !isNavigatingTurn &&
+      lastKnownBottomPrompt &&
+      currentBottomPromptSig &&
+      lastKnownBottomPrompt !== currentBottomPromptSig;
+
+    if (isNewUserPromptSent) {
       if (currentPrefs.disableAutoScrollOnSend) {
         userInteractedWithScroll = false;
         streamLockActive = true;
@@ -817,7 +937,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
 
     // 场景 2 伴随：模型在流式输出期间，维持视口在这一轮提问头部，防止被宿主强制滚底
-    if (streamLockActive && !userInteractedWithScroll && currentPrefs.disableAutoScrollOnSend) {
+    if (!isNavigatingTurn && streamLockActive && !userInteractedWithScroll && currentPrefs.disableAutoScrollOnSend) {
       const finalTop = computeTargetScrollTopForElement(viewport, lastCard);
       const isNearBottom = (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 80;
       if (isNearBottom) {
@@ -826,6 +946,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
 
     lastKnownTurnCount = currentCount;
+    if (currentBottomPromptSig) {
+      lastKnownBottomPrompt = currentBottomPromptSig;
+    }
   }
 
   // 12. Passive Viewport Tracking & Scroll Controller
@@ -858,7 +981,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     viewport.addEventListener('scroll', () => {
       // 在会话切换到达守护期间，若检测到宿主强行滚底或偏离卡片，立即纠正
-      if (sessionArrivalPending && !userInteractedWithScroll) {
+      if (sessionArrivalPending && !userInteractedWithScroll && !isNavigatingTurn) {
         checkAndApplyArrivalAnchor(viewport);
       }
 
@@ -907,7 +1030,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       setupScrollController(vp);
     }
     syncSessionState();
-    if (vp && sessionArrivalPending && !userInteractedWithScroll) {
+    if (vp && sessionArrivalPending && !userInteractedWithScroll && !isNavigatingTurn) {
       checkAndApplyArrivalAnchor(vp);
     }
     if (updateDebounceTimer) clearTimeout(updateDebounceTimer);

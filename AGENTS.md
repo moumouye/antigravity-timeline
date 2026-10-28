@@ -15,7 +15,8 @@
    # 或 python3 manage.py test
    ```
    若测试未全绿通过（如主视口产生位移、条目数量不符），严禁提交代码，须修复至完全通过；
-3. **单一真理维护原则**：系统架构重构或核心流程调整时，代码提交须同步覆盖更新 [`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md)，确保技术文档与代码实现严格一致，历史变更统一归入 [`CHANGELOG.md`](CHANGELOG.md)。
+3. **单一真理维护原则**：系统架构重构或核心流程调整时，代码提交须同步覆盖更新 [`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md)，确保技术文档与代码实现严格一致，历史变更统一归入 [`CHANGELOG.md`](CHANGELOG.md)；
+4. **门禁全绿后自主提交**：门禁全绿（退出码 0）后，仅 `git add` 本次变更的特定文件（严禁 `git add -A`），严格按【第 3 节决策档案规范】执行 `git commit`；严禁私自 push、amend 或绕过 hook；涉及版本号变动时须与代码同次提交。
 
 ---
 
