@@ -148,13 +148,16 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   let streamLockActive = false;
   let arrivalAnchorRaf = null;
 
-  function triggerSessionArrivalAnchor(reason = 'session_switch') {
+  let targetArrivalConvId = '';
+
+  function triggerSessionArrivalAnchor(reason = 'session_switch', targetConvId = '') {
     if (isNavigatingTurn) return;
     sessionArrivalPending = true;
     userInteractedWithScroll = false;
     sessionArrivalStartTime = performance.now();
     firstAlignedTime = 0;
     streamLockActive = false;
+    targetArrivalConvId = targetConvId || '';
 
     if (arrivalAnchorRaf) {
       cancelAnimationFrame(arrivalAnchorRaf);
@@ -166,6 +169,15 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   function checkAndApplyArrivalAnchor(viewport) {
     if (!sessionArrivalPending || userInteractedWithScroll || isNavigatingTurn || !viewport) {
       sessionArrivalPending = false;
+      return;
+    }
+
+    // 若指定了目标会话 ID，必须等待活跃会话容器切换到目标会话才启动卡片对齐守护
+    const activeConvId = getConversationId();
+    if (targetArrivalConvId && activeConvId && activeConvId !== targetArrivalConvId) {
+      if (performance.now() - sessionArrivalStartTime > 4500) {
+        sessionArrivalPending = false;
+      }
       return;
     }
 
@@ -250,16 +262,24 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
       if (activeConvId) {
         if (!isHovering() && !isInitialBinding && !isNavigatingTurn) {
-          triggerSessionArrivalAnchor('session_switch');
+          triggerSessionArrivalAnchor('session_switch', activeConvId);
         }
         requestFullTurns(activeConvId);
       } else {
         // Switched to empty / new conversation
         sessionArrivalPending = false;
         streamLockActive = false;
+        targetArrivalConvId = '';
         if (arrivalAnchorRaf) {
           cancelAnimationFrame(arrivalAnchorRaf);
           arrivalAnchorRaf = null;
+        }
+        const handle = document.getElementById('agy-timeline-handle');
+        if (handle) updateHandleState(handle, 0);
+        const menu = document.getElementById('agy-timeline-menu');
+        if (menu) {
+          delete menu.dataset.renderedSignature;
+          menu.innerHTML = '';
         }
         hideMenu();
       }
@@ -297,10 +317,10 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     );
   }
 
-  // 5. Locate Host "Load Older Messages" button (Only triggered on explicit click of folded turns)
-  function findLoadOlderBtn() {
-    return Array.from(document.querySelectorAll('button')).find(b => {
-      if (b.disabled) return false;
+  // 5. Locate Host "Load Older Messages" button (Scoped to viewport to avoid auxiliary side panel buttons)
+  function findLoadOlderBtn(viewport = null) {
+    const root = viewport || getViewport() || document;
+    return Array.from(root.querySelectorAll('button')).find(b => {
       const text = (b.textContent || '').trim().toLowerCase();
       const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
       const testId = (b.getAttribute('data-testid') || '').trim().toLowerCase();
@@ -449,8 +469,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       return nodes;
     }
 
-    // If current conversation is empty/new, return empty nodes
-    if (!currentConvId) {
+    // If current conversation is empty/new and no user cards are mounted in DOM, return empty nodes
+    if (!currentConvId && userCards.length === 0) {
       return [];
     }
 
@@ -919,54 +939,83 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (promptEl) promptEl.textContent = `⏳ 正在展开并定位第 ${targetNode.index} 轮...`;
     }
 
-    const waitForDomMutation = (timeoutMs = 300) => {
-      return new Promise(resolve => {
-        let timer = null;
-        const observer = new MutationObserver(() => {
-          if (timer) clearTimeout(timer);
-          observer.disconnect();
-          resolve(true);
-        });
-        const vp = getViewport() || document.body;
-        observer.observe(vp, { childList: true, subtree: true });
-        timer = setTimeout(() => {
-          observer.disconnect();
-          resolve(false);
-        }, timeoutMs);
-      });
-    };
+    try {
+      let attempts = 0;
+      const maxAttempts = 25;
+      while (attempts < maxAttempts) {
+        attempts++;
+        currentNodes = scanTurns();
+        const found = currentNodes.find(n => n.index === targetNode.index);
+        if (found && found.element && found.element.isConnected) {
+          targetNode = found;
+          break;
+        }
 
-    let attempts = 0;
-    while (attempts < 15) {
-      attempts++;
-      const loadBtn = findLoadOlderBtn();
-      if (!loadBtn || loadBtn.disabled) break;
-      loadBtn.click();
-      await waitForDomMutation(300);
+        let loadBtn = findLoadOlderBtn(viewport);
+        if (!loadBtn) {
+          // 视口内已无更多历史展开按钮
+          break;
+        }
+
+        // 若按钮当前正处于繁忙禁用状态，最多等待 1200ms 直至解除禁用
+        if (loadBtn.disabled) {
+          const waitStart = performance.now();
+          let becameEnabled = false;
+          while (performance.now() - waitStart < 1200) {
+            await new Promise(r => setTimeout(r, 60));
+            loadBtn = findLoadOlderBtn(viewport);
+            if (!loadBtn) break;
+            if (!loadBtn.disabled) {
+              becameEnabled = true;
+              break;
+            }
+          }
+          if (!becameEnabled || !loadBtn) break;
+        }
+
+        const prevAria = loadBtn.getAttribute('aria-label') || '';
+        const prevCardsCount = getUserCards().length;
+        loadBtn.click();
+
+        // 轮询等待目标卡片挂载、按钮 aria 变更、卡片总数增加或按钮自然销毁
+        const clickStart = performance.now();
+        while (performance.now() - clickStart < 1600) {
+          await new Promise(r => setTimeout(r, 50));
+          currentNodes = scanTurns();
+          const curFound = currentNodes.find(n => n.index === targetNode.index);
+          if (curFound && curFound.element && curFound.element.isConnected) {
+            targetNode = curFound;
+            break;
+          }
+          const curBtn = findLoadOlderBtn(viewport);
+          if (!curBtn) {
+            break;
+          }
+          if (curBtn.getAttribute('aria-label') !== prevAria || getUserCards().length > prevCardsCount) {
+            break;
+          }
+        }
+
+        if (targetNode.element && targetNode.element.isConnected) {
+          break;
+        }
+      }
 
       currentNodes = scanTurns();
-      const updatedNode = currentNodes.find(n => n.index === targetNode.index);
-      if (updatedNode && updatedNode.element && updatedNode.element.isConnected) {
-        targetNode = updatedNode;
-        break;
+      const finalNode = currentNodes.find(n => n.index === targetNode.index) || targetNode;
+      if (finalNode && finalNode.element && finalNode.element.isConnected) {
+        scrollToElement(viewport, finalNode.element);
       }
+    } finally {
+      if (cardEl) {
+        cardEl.classList.remove('is-loading');
+        const promptEl = cardEl.querySelector('.agy-turn-prompt');
+        if (promptEl) promptEl.textContent = targetNode.userText;
+      }
+      setTimeout(() => {
+        isNavigatingTurn = false;
+      }, 300);
     }
-
-    currentNodes = scanTurns();
-    const finalNode = currentNodes.find(n => n.index === targetNode.index) || targetNode;
-    if (finalNode && finalNode.element && finalNode.element.isConnected) {
-      scrollToElement(viewport, finalNode.element);
-    }
-
-    if (cardEl) {
-      cardEl.classList.remove('is-loading');
-      const promptEl = cardEl.querySelector('.agy-turn-prompt');
-      if (promptEl) promptEl.textContent = targetNode.userText;
-    }
-
-    setTimeout(() => {
-      isNavigatingTurn = false;
-    }, 300);
   }
 
   // 11. Smart Turn Anchoring Controller (Session Switch Arrival & New Turn Lock)
@@ -1192,17 +1241,37 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (newConvBtn) {
       sessionArrivalPending = false;
       streamLockActive = false;
+      targetArrivalConvId = '';
       if (arrivalAnchorRaf) {
         cancelAnimationFrame(arrivalAnchorRaf);
         arrivalAnchorRaf = null;
       }
+      currentConvId = '';
+      fullTranscriptTurns = [];
+      currentNodes = [];
+      lastKnownTurnCount = 0;
+      lastKnownBottomPrompt = '';
+      const handle = document.getElementById('agy-timeline-handle');
+      if (handle) updateHandleState(handle, 0);
+      const menu = document.getElementById('agy-timeline-menu');
+      if (menu) {
+        delete menu.dataset.renderedSignature;
+        menu.innerHTML = '';
+      }
       hideMenu();
-      syncSessionState();
+      setTimeout(() => {
+        syncSessionState();
+        renderUI();
+      }, 80);
       return;
     }
     const row = target?.closest('[data-testid="conversation-row-sidebar"], a[href*="/c/"]');
     if (row) {
-      triggerSessionArrivalAnchor('sidebar_click');
+      const link = row.querySelector('a[href*="/c/"]') || (row.tagName === 'A' ? row : null);
+      const rowHref = link?.getAttribute('href') || '';
+      const match = rowHref.match(/\/c\/([a-f0-9\-]+)/i);
+      const targetCascadeId = row.getAttribute('data-cascade-id') || (match ? match[1] : '');
+      triggerSessionArrivalAnchor('sidebar_click', targetCascadeId);
     }
   };
   document.addEventListener('click', onSidebarRowClick, { capture: true, passive: true });

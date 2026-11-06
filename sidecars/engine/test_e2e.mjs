@@ -289,6 +289,7 @@ async function runE2ETest() {
       // 3. 验证全新空会话（0 轮）物理状态机守卫
       const newBtn = document.querySelector('[data-testid="new-conversation-button"], a[href="/"]');
       let emptySessionGuarded = true;
+      let arrivalAnchorVerified = true;
       if (newBtn) {
         newBtn.click();
         await new Promise(r => setTimeout(r, 200));
@@ -326,15 +327,41 @@ async function runE2ETest() {
           targetSidebarLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
           targetSidebarLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
           targetSidebarLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 1200));
+
+          const curVp = document.querySelector('[data-testid="autoscroll-viewport"]') || vp;
+          const cards = (typeof getUserCards === 'function') ? getUserCards() : [];
+          if (cards.length > 0 && curVp) {
+            const last = cards[cards.length - 1];
+            const vpR = curVp.getBoundingClientRect();
+            const lastR = last.getBoundingClientRect();
+            const relTop = Math.abs(lastR.top - vpR.top);
+            arrivalAnchorVerified = relTop <= 20;
+          }
         }
+      }
+
+      // 4. 验证折叠历史条目按需展开与定位守护（杜绝因 disabled 或属性微变提前退出）
+      let foldedExpansionGuarded = true;
+      const curMenuAfter = document.getElementById('agy-timeline-menu');
+      const foldedCard = curMenuAfter?.querySelector('.agy-turn-card.is-folded');
+      if (foldedCard) {
+        foldedCard.click();
+        const fStart = performance.now();
+        while (performance.now() - fStart < 5000) {
+          await new Promise(r => setTimeout(r, 100));
+          if (!foldedCard.classList.contains('is-loading')) break;
+        }
+        foldedExpansionGuarded = !foldedCard.classList.contains('is-loading');
       }
 
       return {
         cleanTextExtracted,
         noBottomRebound,
         emptySessionGuarded,
-        regressionProtected: cleanTextExtracted && noBottomRebound && emptySessionGuarded
+        arrivalAnchorVerified,
+        foldedExpansionGuarded,
+        regressionProtected: cleanTextExtracted && noBottomRebound && emptySessionGuarded && arrivalAnchorVerified && foldedExpansionGuarded
       };
     })()`,
     awaitPromise: true,
@@ -351,6 +378,12 @@ async function runE2ETest() {
   }
   if (!regRes?.emptySessionGuarded) {
     throw new Error('全新空会话（0 轮）物理状态机守卫校验失败（悬停仍误开或点击未显示 0 轮）');
+  }
+  if (!regRes?.arrivalAnchorVerified) {
+    throw new Error('跨会话切换到达守护对齐末轮头部校验失败');
+  }
+  if (!regRes?.foldedExpansionGuarded) {
+    throw new Error('折叠历史卡片按需展开定位失败（卡死在 is-loading 或未完成加载）');
   }
 
   // 验证点击外部或完成定位后菜单自动关闭收起

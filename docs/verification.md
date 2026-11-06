@@ -90,7 +90,7 @@ flowchart TD
 | **[3/6] 热注入评估** | 渲染进程上下文 | `Runtime.evaluate` 注入自执行代码 | 运行时 `exceptionDetails` 严格为空 |
 | **[4/6] 悬停静止与对齐** | 手柄交互与菜单展示 | 1. `viewportScrollDelta === 0`<br>2. `totalTurnsInMenu === transcriptTurns.length`<br>3. `hasResidualFloatBtn === false`<br>4. `hasActiveCard === true` | **主视口位移严格为 0 像素**，菜单条目与底层日志完全相等，无旧按钮残留 |
 | **[5/6] 自然平滑定向跳转** | 显式点击定位 | 1. `cardClicked === true`<br>2. `noHighlightPollution === true` | 触发平滑定位，无任何多余绿色光晕样式污染，零贴合精准对齐 |
-| **[6/6] 防回弹与防误判门禁** | 稳态轨迹与脏数据解析 | 1. `cleanTextExtracted === true`<br>2. `noBottomRebound === true`<br>3. `emptySessionGuarded === true`<br>4. `regressionProtected === true` | 引用胶囊纯净剥离，非末轮跳转杜绝被强推回末轮，全新空会话物理状态机守卫成立（悬停静默，点击显式展示 0 轮） |
+| **[6/6] 防回弹与防误判门禁** | 稳态轨迹与脏数据解析 | 1. `cleanTextExtracted === true`<br>2. `noBottomRebound === true`<br>3. `emptySessionGuarded === true`<br>4. `arrivalAnchorVerified === true`<br>5. `foldedExpansionGuarded === true`<br>6. `regressionProtected === true` | 引用胶囊纯净剥离，非末轮跳转杜绝被强推回末轮，全新空会话物理状态机守卫成立（悬停静默，点击显式展示 0 轮），跨会话到达守护平滑锚定末轮头部，折叠早期历史按需展开定位成功 |
 
 ---
 
