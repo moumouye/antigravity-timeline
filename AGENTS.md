@@ -1,26 +1,41 @@
 # 架构治理与协同准则 (Architecture & Contribution Guide)
 
-本文档定义系统架构指针、质量验收门禁、语义化版本与代码提交标准。
+本文档定义系统架构指针、质量验收门禁、代码规范强绑定、语义化版本与提交决策档案标准。
 
 ---
 
-## 1. 架构指针与质量门禁 (Architecture Pointers & Verification Gate)
+## 1. 架构指针与质量验收门禁 (Verification Gate)
 
 为保证系统架构一致性与代码质量，所有代码变更须遵守以下规范：
 
-1. **架构索引指针**：修改核心通信、DOM 交互或定位逻辑前，查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md) 并调阅 [`docs/`](docs/) 对应真理库（[`docs/boundaries.md`](docs/boundaries.md)、[`docs/contracts.md`](docs/contracts.md)、[`docs/anti-patterns.md`](docs/anti-patterns.md)）；
-2. **自动化测试门禁**：代码提交前必须本地全绿通过端到端测试（参考 [`docs/verification.md`](docs/verification.md)）：
+1. **架构索引指针**：修改核心通信、DOM 交互或定位逻辑前，首先查阅 [`ARCHITECTURE.md`](ARCHITECTURE.md) 的意图路由表，并按需调阅 [`docs/`](docs/) 对应真理库（[`docs/boundaries.md`](docs/boundaries.md)、[`docs/contracts.md`](docs/contracts.md)、[`docs/anti-patterns.md`](docs/anti-patterns.md)）与领域规范（[`docs/specs/VIEWPORT_ANCHORING_SPEC.md`](docs/specs/VIEWPORT_ANCHORING_SPEC.md)）；
+2. **交付前机器自主门禁 (Zero-User-Testing Mandate)**：交付成果前，智能体必须在本地终端自主运行并全绿通过自动化测试（参考 [`docs/verification.md`](docs/verification.md)）：
    ```bash
-   uv run manage.py test
-   # 或 python3 manage.py test
+   manage.py test
+   # 本地环境可使用 python3 manage.py test 或 uv run manage.py test
    ```
-   若测试未全绿通过（如主视口产生位移、条目数量不符），严禁提交代码，须修复至完全通过；
-3. **单一真理维护原则**：系统架构重构或核心流程调整时，代码提交须同步覆盖更新 [`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md)，确保技术文档与代码实现严格一致，历史变更统一归入 [`CHANGELOG.md`](CHANGELOG.md)；
-4. **门禁全绿后自主提交**：门禁全绿（退出码 0）后，仅 `git add` 本次变更的特定文件（严禁 `git add -A`），严格按【第 3 节决策档案规范】执行 `git commit`；严禁私自 push、amend 或绕过 hook；涉及版本号变动时须与代码同次提交。
+   * 进程退出码必须严格为 `0`；
+   * 严禁要求用户手动测试代码；遇错须基于 STDERR 堆栈在本地自主排查自愈；
+3. **缺陷锁死铁律 (Bug-to-Test Invariant)**：凡涉及缺陷修复，同次提交必须伴随新增针对该缺陷的反向断言测试用例，并在 [`docs/anti-patterns.md`](docs/anti-patterns.md) 中沉淀技术根因，杜绝同类问题二次逃逸；
+4. **单一真理维护原则**：系统架构重构或核心流程调整时，代码提交须同步覆盖更新 [`docs/`](docs/) 与 [`ARCHITECTURE.md`](ARCHITECTURE.md)，确保技术文档与代码实现严格一致，历史变更统一归入 [`CHANGELOG.md`](CHANGELOG.md)；
+5. **门禁全绿后自主提交**：门禁全绿（退出码 0）后，仅 `git add` 本次变更的特定文件（严禁 `git add -A`），严格按【第 4 节决策档案规范】执行 `git commit`；严禁私自 push、amend 或绕过 hook；涉及版本号变动时须与代码同次提交。
 
 ---
 
-## 2. 语义化版本规范 (SemVer)
+## 2. 代码与领域规范强绑定映射 (Code-to-Doc Living Locks)
+
+为杜绝文档腐化，凡改动以下源码核心逻辑，必须在同一次提交中同步覆盖写对应的领域规范文档，测试断言与文档必须保持 100% 一致性：
+
+| 变更源码路径 | 核心业务领域 | 必须同步更新的规范文档 | 核心关注点与不变量 |
+| :--- | :--- | :--- | :--- |
+| `sidecars/engine/client/panel.js` | 视口锚定与定位控制器 | [`docs/specs/VIEWPORT_ANCHORING_SPEC.md`](docs/specs/VIEWPORT_ANCHORING_SPEC.md) | 主视口 0 像素位移、1800ms 平息收敛状态机 |
+| `sidecars/engine/main.mjs` | 底层日志监听与 CDP 桥接 | [`docs/contracts.md`](docs/contracts.md) | 单向数据流管道、CDP IPC 契约一致性 |
+| `sidecars/engine/client/` | 页面交互与提问卡片采集 | [`docs/anti-patterns.md`](docs/anti-patterns.md) | 杜绝耦合排版类名、空会话状态机重置 |
+| `sidecars/engine/test_e2e.mjs` | 自动化质量工程与断言 | [`docs/verification.md`](docs/verification.md) | 六大阶段断言、四大不可违背物理不变量 |
+
+---
+
+## 3. 语义化版本规范 (SemVer)
 
 版本号格式为：`X.Y.Z`（`MAJOR.MINOR.PATCH`）。
 
@@ -34,7 +49,7 @@
 
 ---
 
-## 3. 提交与决策档案规范 (Conventional Commits)
+## 4. 提交与决策档案规范 (Conventional Commits)
 
 提交信息采用**“简短结果标题 + 决策档案正文（Why > What）”**格式：
 
@@ -60,7 +75,7 @@
 
 ---
 
-## 4. 变更日志维护 (CHANGELOG)
+## 5. 变更日志维护 (CHANGELOG)
 
 变更记录统一维护在根目录 [`CHANGELOG.md`](CHANGELOG.md) 中，采用扁平化无序列表配合 Emoji 前缀记录。
 

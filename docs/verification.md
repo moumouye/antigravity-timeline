@@ -27,8 +27,8 @@ flowchart TD
 ## 2. 唯一指定测试门禁 (Execution Command)
 
 ```bash
-uv run manage.py test
-# 或 python3 manage.py test
+manage.py test
+# 本地环境可使用 python3 manage.py test 或 uv run manage.py test
 ```
 
 * **判定标准**：进程退出码必须为 `0`（全绿通过）；
