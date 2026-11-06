@@ -66,6 +66,15 @@
   box-shadow: 0 0 8px var(--agy-timeline-accent);
 }
 
+#agy-timeline-handle.is-empty {
+  opacity: 0.65;
+}
+
+#agy-timeline-handle.is-empty .agy-handle-bar {
+  opacity: 0.6;
+}
+
+
 /* 2. Hover Expanded All-Turns Timeline Menu */
 #agy-timeline-menu {
   position: fixed;

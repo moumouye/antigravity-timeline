@@ -77,18 +77,28 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
   // 3. Robust Multi-Source Conversation ID Detector
   function getConversationId() {
+    const selectedRow = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
+    const hasPathConv = window.location.pathname.match(/\/c\/([a-f0-9\-]+)/i);
+
     // 1. Primary: Active conversation-view container cascade-id
     const viewEl = document.querySelector('[data-testid="conversation-view"]');
     const viewCascadeId = viewEl?.getAttribute('data-cascade-id');
     if (viewCascadeId && /^[a-f0-9\-]+$/i.test(viewCascadeId)) {
+      if (selectedRow) {
+        const rowCascadeId = selectedRow.getAttribute('data-cascade-id');
+        if (rowCascadeId && /^[a-f0-9\-]+$/i.test(rowCascadeId)) {
+          return rowCascadeId;
+        }
+      }
       return viewCascadeId;
     }
 
     // 2. Secondary: Currently selected sidebar row
-    const selectedRow = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
-    const rowCascadeId = selectedRow?.getAttribute('data-cascade-id');
-    if (rowCascadeId && /^[a-f0-9\-]+$/i.test(rowCascadeId)) {
-      return rowCascadeId;
+    if (selectedRow) {
+      const rowCascadeId = selectedRow.getAttribute('data-cascade-id');
+      if (rowCascadeId && /^[a-f0-9\-]+$/i.test(rowCascadeId)) {
+        return rowCascadeId;
+      }
     }
 
     const selectedLink = document.querySelector('[class*="bg-sidebar-secondary"] a[href*="/c/"], [class*="bg-sidebar-accent"] a[href*="/c/"]');
@@ -99,8 +109,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     }
 
     // 3. Tertiary: Fallback to pathname / search / href
-    const pathMatch = window.location.pathname.match(/\/c\/([a-f0-9\-]+)/i);
-    if (pathMatch) return pathMatch[1];
+    if (hasPathConv) return hasPathConv[1];
 
     const searchMatch = window.location.search.match(/conversationId=([a-f0-9\-]+)/i);
     if (searchMatch) return searchMatch[1];
@@ -112,6 +121,21 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   }
 
   let currentConvId = getConversationId();
+
+  /**
+   * Robust user card element locator
+   * Matches data-testid="user-input-step" and group/user-input-step across varying paddings (pt-4, pt-6, etc.)
+   * Filters out any nested descendant elements to ensure 1-to-1 card correspondence.
+   * @returns {HTMLElement[]}
+   */
+  function getUserCards() {
+    const rawElements = Array.from(document.querySelectorAll('div[data-testid="user-input-step"], div[class*="group/user-input-step"]'));
+    return /** @type {HTMLElement[]} */ (
+      rawElements.filter((el, idx) => {
+        return el instanceof HTMLElement && !rawElements.some((other, oIdx) => oIdx !== idx && other.contains(el));
+      })
+    );
+  }
 
   // Smart Turn Anchoring Controller state
   let userInteractedWithScroll = false;
@@ -147,7 +171,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     setupScrollController(viewport);
     const now = performance.now();
-    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
+    const userCards = getUserCards();
 
     if (userCards.length > 0) {
       const lastCard = userCards[userCards.length - 1];
@@ -202,7 +226,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     if (convId && activeConvId && convId !== activeConvId) return;
     if (Array.isArray(turns)) {
       fullTranscriptTurns = turns;
-      if (convId) currentConvId = convId;
+      currentConvId = convId || '';
       renderUI();
     }
   };
@@ -213,19 +237,32 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
    */
   function syncSessionState() {
     const activeConvId = getConversationId();
-    if (activeConvId && activeConvId !== currentConvId) {
-      const isInitialBinding = !currentConvId;
+    if (activeConvId !== currentConvId) {
+      const isInitialBinding = (currentConvId === null || currentConvId === undefined || currentConvId === '');
       currentConvId = activeConvId;
       fullTranscriptTurns = [];
       currentNodes = [];
       lastKnownTurnCount = 0;
       lastKnownBottomPrompt = '';
-      if (!isHovering() && !isInitialBinding && !isNavigatingTurn) {
-        triggerSessionArrivalAnchor('session_switch');
-      }
+      
       const menu = document.getElementById('agy-timeline-menu');
       if (menu) delete menu.dataset.renderedSignature;
-      requestFullTurns(activeConvId);
+
+      if (activeConvId) {
+        if (!isHovering() && !isInitialBinding && !isNavigatingTurn) {
+          triggerSessionArrivalAnchor('session_switch');
+        }
+        requestFullTurns(activeConvId);
+      } else {
+        // Switched to empty / new conversation
+        sessionArrivalPending = false;
+        streamLockActive = false;
+        if (arrivalAnchorRaf) {
+          cancelAnimationFrame(arrivalAnchorRaf);
+          arrivalAnchorRaf = null;
+        }
+        hideMenu();
+      }
       return true;
     }
     return false;
@@ -263,8 +300,15 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // 5. Locate Host "Load Older Messages" button (Only triggered on explicit click of folded turns)
   function findLoadOlderBtn() {
     return Array.from(document.querySelectorAll('button')).find(b => {
+      if (b.disabled) return false;
       const text = (b.textContent || '').trim().toLowerCase();
-      return (text.includes('load older messages') || text.includes('加载更早') || text.includes('更多历史')) && !b.disabled;
+      const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+      const testId = (b.getAttribute('data-testid') || '').trim().toLowerCase();
+      if (text.includes('no more') || aria.includes('no more')) return false;
+      const matchesText = text.includes('load older') || text.includes('加载更早') || text.includes('更多历史') || text.includes('加载历史');
+      const matchesAria = aria.includes('load older') || aria.includes('加载更早') || aria.includes('更多历史');
+      const matchesTestId = testId.includes('load-older') || testId.includes('load-more');
+      return matchesText || matchesAria || matchesTestId;
     }) || null;
   }
 
@@ -299,7 +343,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     const viewport = getViewport();
     if (!viewport) return [];
 
-    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
+    const userCards = getUserCards();
     const scrollHeight = Math.max(viewport.scrollHeight, 1);
 
     // Primary: Canonical Full Turns from Engine Transcript
@@ -403,6 +447,11 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       }
 
       return nodes;
+    }
+
+    // If current conversation is empty/new, return empty nodes
+    if (!currentConvId) {
+      return [];
     }
 
     // Fallback: When transcript is not yet available, parse mounted DOM cards
@@ -522,7 +571,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
           hoverIntentTimer = window.setTimeout(() => {
             hoverIntentTimer = null;
             if (isHovering()) {
-              showMenu();
+              showMenu(false);
             }
           }, 110);
         }
@@ -558,11 +607,23 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
           hideMenu();
         } else {
           isHoveringHandle = true;
-          showMenu();
+          showMenu(true);
         }
       });
     }
     return handle;
+  }
+
+  function updateHandleState(handle, turnsCount) {
+    if (!handle) return;
+    const txt = t();
+    if (turnsCount === 0) {
+      handle.title = `${txt.title} (${txt.turnsCount(0)})`;
+      handle.classList.add('is-empty');
+    } else {
+      handle.title = `${txt.title} (${txt.turnsCount(turnsCount)})`;
+      handle.classList.remove('is-empty');
+    }
   }
 
   // 9. Hover Expanded All-Turns Timeline Menu
@@ -598,7 +659,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
     return menu;
   }
 
-  function showMenu() {
+  function showMenu(isExplicitClick = false) {
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;
@@ -612,15 +673,26 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       cancelAnimationFrame(arrivalAnchorRaf);
       arrivalAnchorRaf = null;
     }
-    const menu = ensureMenu();
-    const handle = ensureHandle();
-    const viewport = getViewport();
 
     // Check and sync session state without losing transcript data
     syncSessionState();
 
     currentNodes = scanTurns();
-    updateActiveNode(currentNodes, viewport);
+    const viewport = getViewport();
+    if (viewport) {
+      updateActiveNode(currentNodes, viewport);
+    }
+
+    const handle = ensureHandle();
+    updateHandleState(handle, currentNodes.length);
+
+    // 若当前为 0 轮对话且属于鼠标悬停（非显式单击），不展开空菜单，避免无意义弹窗干扰新会话初始界面；
+    // 仅在用户显式单击手柄时展开以查看状态
+    if (currentNodes.length === 0 && !isExplicitClick) {
+      return;
+    }
+
+    const menu = ensureMenu();
 
     handle.classList.add('is-active');
     renderMenuList(menu, currentNodes);
@@ -847,7 +919,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       if (promptEl) promptEl.textContent = `⏳ 正在展开并定位第 ${targetNode.index} 轮...`;
     }
 
-    const waitForDomMutation = (timeoutMs = 200) => {
+    const waitForDomMutation = (timeoutMs = 300) => {
       return new Promise(resolve => {
         let timer = null;
         const observer = new MutationObserver(() => {
@@ -870,7 +942,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       const loadBtn = findLoadOlderBtn();
       if (!loadBtn || loadBtn.disabled) break;
       loadBtn.click();
-      await waitForDomMutation(200);
+      await waitForDomMutation(300);
 
       currentNodes = scanTurns();
       const updatedNode = currentNodes.find(n => n.index === targetNode.index);
@@ -900,7 +972,7 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // 11. Smart Turn Anchoring Controller (Session Switch Arrival & New Turn Lock)
   function checkAndApplyViewAnchoring(viewport) {
     if (!viewport || isNavigatingTurn) return;
-    const userCards = Array.from(document.querySelectorAll('div[class*="group/user-input-step"][class*="pt-4"]'));
+    const userCards = getUserCards();
     if (userCards.length === 0) return;
 
     const currentCount = userCards.length;
@@ -999,7 +1071,8 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
     currentNodes = scanTurns();
     updateActiveNode(currentNodes, viewport);
-    ensureHandle();
+    const handle = ensureHandle();
+    updateHandleState(handle, currentNodes.length);
 
     // Check and anchor viewport to latest turn header (Session Arrival & Stream Guard)
     checkAndApplyViewAnchoring(viewport);
@@ -1115,9 +1188,21 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
   // 15.6 Sidebar Row Click Instant Arrival Trigger
   const onSidebarRowClick = (e) => {
     const target = /** @type {HTMLElement | null} */ (e.target);
+    const newConvBtn = target?.closest('[data-testid="new-conversation-button"], a[href="/"]');
+    if (newConvBtn) {
+      sessionArrivalPending = false;
+      streamLockActive = false;
+      if (arrivalAnchorRaf) {
+        cancelAnimationFrame(arrivalAnchorRaf);
+        arrivalAnchorRaf = null;
+      }
+      hideMenu();
+      syncSessionState();
+      return;
+    }
     const row = target?.closest('[data-testid="conversation-row-sidebar"], a[href*="/c/"]');
     if (row) {
-      triggerSessionArrivalAnchor();
+      triggerSessionArrivalAnchor('sidebar_click');
     }
   };
   document.addEventListener('click', onSidebarRowClick, { capture: true, passive: true });

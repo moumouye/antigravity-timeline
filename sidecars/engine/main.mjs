@@ -109,7 +109,21 @@ async function loadTranscriptTurns(convId) {
 }
 
 async function pushTurnsToPage(client, convId, force = false) {
-  if (!client || client.closed || !convId) return;
+  if (!client || client.closed) return;
+  if (!convId) {
+    if (!force && client.lastSentConvId === '') return;
+    client.lastSentConvId = '';
+    client.lastSentTurnsSignature = 'empty';
+    try {
+      await client.send('Runtime.evaluate', {
+        expression: `if (typeof window.__agyReceiveFullTurns === 'function') {
+          window.__agyReceiveFullTurns('', []);
+        }`
+      });
+    } catch {}
+    return;
+  }
+  client.lastSentConvId = convId;
   const turns = await loadTranscriptTurns(convId);
   const signature = `${convId}::${turns.length}::${turns[turns.length - 1]?.preview || ''}`;
   if (!force && client.lastSentTurnsSignature === signature) return;
@@ -134,6 +148,7 @@ class CdpClient {
     this.ws = null;
     this.closed = false;
     this.lastSentTurnsSignature = '';
+    this.lastSentConvId = undefined;
   }
 
   async connect() {
@@ -352,19 +367,21 @@ async function tick() {
         try {
           const res = await client.send('Runtime.evaluate', {
             expression: `(() => {
-              const view = document.querySelector('[data-testid="conversation-view"]');
-              const cid = view ? view.getAttribute('data-cascade-id') : null;
-              if (cid && /^[a-f0-9\\-]+$/i.test(cid)) return cid;
               const sel = document.querySelector('[data-testid="conversation-row-sidebar"][data-selected="true"]');
               const sid = sel ? sel.getAttribute('data-cascade-id') : null;
               if (sid && /^[a-f0-9\\-]+$/i.test(sid)) return sid;
+              const view = document.querySelector('[data-testid="conversation-view"]');
+              const cid = view ? view.getAttribute('data-cascade-id') : null;
+              if (cid && /^[a-f0-9\\-]+$/i.test(cid)) return cid;
               const match = window.location.pathname.match(/\\/c\\/([a-f0-9\\-]+)/i);
               return match ? match[1] : '';
             })()`
           });
-          const convId = res?.result?.value || null;
+          const convId = res?.result?.value || '';
           if (convId) {
             await pushTurnsToPage(client, convId);
+          } else {
+            await pushTurnsToPage(client, '');
           }
         } catch {}
       }

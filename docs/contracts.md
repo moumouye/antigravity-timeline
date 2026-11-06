@@ -46,7 +46,7 @@ flowchart TB
 
 | 绑定方法 / 评估表达式 | 发起方 | 接收方 | 载荷参数 | 契约职责与说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| `window.__agyReceiveFullTurns(convId, turns)` | Sidecar | Client | `convId: string`<br>`turns: Array<TranscriptTurn>` | 将解析后的全量会话轮次推入客户端内存，供时间线菜单直出展示。 |
+| `window.__agyReceiveFullTurns(convId, turns)` | Sidecar | Client | `convId: string`<br>`turns: Array<TranscriptTurn>` | 将解析后的全量会话轮次推入客户端内存，供时间线菜单直出展示；当 `convId === ''` 时推入空数组 `[]`，彻底重置客户端为 0 轮空会话状态。 |
 | `__agyTimelineRequestTurns(convId)` | Client | Sidecar | `convId: string` | 客户端路由切换或初始化时，向后台主动请求当前会话的最新数据（Sidecar 必须无条件全量推送，忽略签名防重截断）。 |
 | `__agyTimelineSavePrefs(jsonString)` | Client | Sidecar | `jsonString: string` | 客户端修改用户偏好设置后，回传给 Sidecar 执行原子磁盘持久化。 |
 | `window.location.pathname` | Sidecar | Client | 无 (查询) | Sidecar 每 1.2 秒轮询客户端当前路径，捕获 `/c/<conv-id>` 会话切换事件。 |

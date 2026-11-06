@@ -84,6 +84,8 @@ async function runE2ETest() {
   }
 
   await sendCdp('Runtime.enable');
+  await sendCdp('Page.bringToFront');
+  await sendCdp('Emulation.setFocusEmulationEnabled', { enabled: true });
 
   console.log('\n=== [3/6] 执行热注入评估 (Runtime.evaluate) ===');
   const evalRes = await sendCdp('Runtime.evaluate', {
@@ -95,8 +97,8 @@ async function runE2ETest() {
   }
   console.log('注入执行成功，无任何运行时语法或执行异常。');
 
-  // 同步全量 transcript 轮次数据至客户端（多级会话探测）
-  const convIdRes = await sendCdp('Runtime.evaluate', {
+  // 同步全量 transcript 轮次数据至客户端（多级会话探测与自动激活）
+  let convIdRes = await sendCdp('Runtime.evaluate', {
     expression: `(() => {
       const view = document.querySelector('[data-testid="conversation-view"]');
       const cid = view ? view.getAttribute('data-cascade-id') : null;
@@ -109,13 +111,34 @@ async function runE2ETest() {
     })()`,
     returnByValue: true
   });
-  const convId = convIdRes?.result?.value;
+  let convId = convIdRes?.result?.value;
+
+  // 若当前尚未激活具体会话，自动点击侧边栏首个会话载入环境
+  if (!convId) {
+    const navRes = await sendCdp('Runtime.evaluate', {
+      expression: `(async () => {
+        const link = document.querySelector('a[href*="/c/"]');
+        if (link) {
+          link.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+          link.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+          link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          await new Promise(r => setTimeout(r, 600));
+          const view = document.querySelector('[data-testid="conversation-view"]');
+          return view ? view.getAttribute('data-cascade-id') : '';
+        }
+        return '';
+      })()`,
+      awaitPromise: true,
+      returnByValue: true
+    });
+    convId = navRes?.result?.value;
+  }
+  let turns = [];
   if (convId) {
     const transPath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
     if (existsSync(transPath)) {
       const raw = await readFile(transPath, 'utf8');
       const lines = raw.split(/\r?\n/).filter(Boolean);
-      const turns = [];
       let turnIdx = 1;
       for (const line of lines) {
         try {
@@ -263,10 +286,55 @@ async function runE2ETest() {
         noBottomRebound = (vp.scrollTop < initialBottom);
       }
 
+      // 3. 验证全新空会话（0 轮）物理状态机守卫
+      const newBtn = document.querySelector('[data-testid="new-conversation-button"], a[href="/"]');
+      let emptySessionGuarded = true;
+      if (newBtn) {
+        newBtn.click();
+        await new Promise(r => setTimeout(r, 200));
+
+        const handle = document.getElementById('agy-timeline-handle');
+        const curMenu = document.getElementById('agy-timeline-menu');
+
+        // 3.1 悬停手柄：严禁弹开空菜单（0 轮防干扰保护）
+        if (handle) {
+          handle.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        }
+        await new Promise(r => setTimeout(r, 160));
+        const menuVisibleOnEmptyHover = curMenu?.classList.contains('show') || false;
+
+        // 3.2 显式单击手柄：允许展开查看空状态，正确展示“共 0 轮交互”与空提示
+        if (handle) {
+          handle.click();
+        }
+        await new Promise(r => setTimeout(r, 60));
+        const menuVisibleOnEmptyClick = curMenu?.classList.contains('show') || false;
+        const badgeText = curMenu?.querySelector('.agy-menu-badge')?.textContent || '';
+        const listText = curMenu?.querySelector('#agy-menu-list')?.textContent || '';
+        const handleTitle = handle?.getAttribute('title') || '';
+        const isEmptyStateValid = menuVisibleOnEmptyClick &&
+          badgeText.includes('0') &&
+          listText.includes('等待对话生成中') &&
+          handleTitle.includes('0');
+
+        emptySessionGuarded = !menuVisibleOnEmptyHover && isEmptyStateValid;
+
+        // 3.3 切换回之前会话，验证会话到达锚定机制与功能复原
+        const targetSidebarLink = document.querySelector('a[href*="/c/' + (${JSON.stringify(convId || '')}) + '"]') ||
+                                  document.querySelector('[data-testid="conversation-row-sidebar"] a[href*="/c/"]');
+        if (targetSidebarLink) {
+          targetSidebarLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+          targetSidebarLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+          targetSidebarLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
+
       return {
         cleanTextExtracted,
         noBottomRebound,
-        regressionProtected: cleanTextExtracted && noBottomRebound
+        emptySessionGuarded,
+        regressionProtected: cleanTextExtracted && noBottomRebound && emptySessionGuarded
       };
     })()`,
     awaitPromise: true,
@@ -280,6 +348,9 @@ async function runE2ETest() {
   }
   if (!regRes?.noBottomRebound) {
     throw new Error('检测到非末轮跳转被强推回末轮的异常回弹');
+  }
+  if (!regRes?.emptySessionGuarded) {
+    throw new Error('全新空会话（0 轮）物理状态机守卫校验失败（悬停仍误开或点击未显示 0 轮）');
   }
 
   // 验证点击外部或完成定位后菜单自动关闭收起
