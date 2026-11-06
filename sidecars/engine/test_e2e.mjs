@@ -165,6 +165,9 @@ async function runE2ETest() {
     }
   }
 
+  // 等待初始注入与会话状态平稳就绪
+  await new Promise(r => setTimeout(r, 250));
+
   console.log('\n=== [4/6] 验证右侧手柄悬停主视口绝对静止与全量菜单自适应对齐 ===');
   const domCheck = await sendCdp('Runtime.evaluate', {
     expression: `(async () => {
