@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadTranscriptTurns, sanitizeUserPrompt } from './transcript.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -58,55 +59,6 @@ function buildWrappedScript(injectScript, savedPrefs) {
   `;
 }
 
-function sanitizeUserPrompt(rawContent) {
-  let text = (rawContent || '').trim();
-  // 1. 剥离系统包装标签
-  text = text.replace(/<\/?USER_REQUEST>/g, '')
-             .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
-             .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
-             .trim();
-
-  // 2. 剥离引用前缀标签 (如 @[Quote] 或 @[conversation:"..."] 或 @[file:"..."])
-  const cleanPrompt = text.replace(/@\[(?:Quote|conversation:[^\]]+|file:[^\]]+|[^\]]+)\]/g, '').trim();
-
-  return {
-    raw: text,
-    clean: cleanPrompt || text
-  };
-}
-
-async function loadTranscriptTurns(convId) {
-  if (!convId) return [];
-  const filePath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
-  try {
-    if (!existsSync(filePath)) return [];
-    const raw = await readFile(filePath, 'utf8');
-    const lines = raw.split(/\r?\n/).filter(Boolean);
-    const turns = [];
-    let turnIdx = 1;
-    for (const line of lines) {
-      try {
-        const item = JSON.parse(line);
-        if (item.type === 'USER_INPUT') {
-          const { raw: rawText, clean: cleanText } = sanitizeUserPrompt(item.content);
-          const lns = cleanText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-          const preview = lns.slice(0, 2).join(' ') || (`Turn #${turnIdx}`);
-          turns.push({
-            index: turnIdx++,
-            stepIndex: item.step_index,
-            preview: preview.length > 120 ? preview.slice(0, 118) + '...' : preview,
-            fullText: rawText,
-            cleanText: cleanText,
-            createdAt: item.created_at || ''
-          });
-        }
-      } catch {}
-    }
-    return turns;
-  } catch {
-    return [];
-  }
-}
 
 async function pushTurnsToPage(client, convId, force = false) {
   if (!client || client.closed) return;

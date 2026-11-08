@@ -15,14 +15,14 @@ flowchart TB
         DevToolsPort["DevToolsActivePort<br/>(CDP 动态调试端口)"]
     end
 
-    subgraph SidecarEngine ["⚙️ 引擎服务层 (sidecars/engine/main.mjs)"]
-        Scanner["会话感知与日志解析器<br/>(剥离元标签 / 提取纯净 Prompt / 1.2s 心跳)"]
+    subgraph SidecarEngine ["⚙️ 引擎服务层 (sidecars/engine/main.mjs & transcript.mjs)"]
+        Scanner["会话感知与日志解析器<br/>(回滚分支感知出栈剪枝 / 剥离元标签 / 提取纯净 Prompt / 1.2s 心跳)"]
         CdpHost["CDP WebSocket 桥接客户端<br/>(Runtime.evaluate / Runtime.addBinding)"]
     end
 
     subgraph InjectedClient ["🎨 页面注入层 (sidecars/engine/client/panel.js)"]
         Receiver["window.__agyReceiveFullTurns(convId, turns)<br/>(内存全量元数据仓库)"]
-        DOMReconcile["DOM 挂载探针 (scanTurns)<br/>(匹配当前视口已有卡片，区分已挂载与已折叠)"]
+        DOMReconcile["DOM 挂载探针 (scanTurns)<br/>(多级特征精准匹配优先 Tier 1.1，区分已挂载与已折叠)"]
         ActiveSpy["视口活跃度解算器 (updateActiveNode)<br/>(底部聚焦最新，中间聚焦临近轮次)"]
         AnchorController["智能提问锚定控制器 (checkAndApplyViewAnchoring)<br/>(会话切换直达末轮头部 / 新提问防下滚锁定 / 主动导航解绑护航)"]
         RenderGuard["增量签名守卫 (data-renderedSignature)<br/>(无新增轮次时仅更新样式类，DOM 零重绘)"]

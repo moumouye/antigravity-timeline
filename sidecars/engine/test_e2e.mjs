@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadTranscriptTurns, parseTranscriptContent } from './transcript.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -135,33 +136,14 @@ async function runE2ETest() {
   }
   let turns = [];
   if (convId) {
-    const transPath = join(homedir(), '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl');
-    if (existsSync(transPath)) {
-      const raw = await readFile(transPath, 'utf8');
-      const lines = raw.split(/\r?\n/).filter(Boolean);
-      let turnIdx = 1;
-      for (const line of lines) {
-        try {
-          const item = JSON.parse(line);
-          if (item.type === 'USER_INPUT') {
-            let text = (item.content || '').replace(/<\/?USER_REQUEST>/g, '')
-                                           .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/g, '')
-                                           .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/g, '')
-                                           .trim();
-            const lns = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-            const preview = lns.slice(0, 2).join(' ') || (`Turn #${turnIdx}`);
-            turns.push({ index: turnIdx++, preview: preview.slice(0, 100), fullText: text, stepIndex: item.step_index });
-          }
-        } catch {}
-      }
-      if (turns.length > 0) {
-        console.log(`成功同步 ${turns.length} 轮底层全量会话至渲染端`);
-        await sendCdp('Runtime.evaluate', {
-          expression: `if (typeof window.__agyReceiveFullTurns === 'function') {
-            window.__agyReceiveFullTurns(${JSON.stringify(convId)}, ${JSON.stringify(turns)});
-          }`
-        });
-      }
+    turns = await loadTranscriptTurns(convId);
+    if (turns.length > 0) {
+      console.log(`成功同步 ${turns.length} 轮底层全量会话至渲染端`);
+      await sendCdp('Runtime.evaluate', {
+        expression: `if (typeof window.__agyReceiveFullTurns === 'function') {
+          window.__agyReceiveFullTurns(${JSON.stringify(convId)}, ${JSON.stringify(turns)});
+        }`
+      });
     }
   }
 
@@ -389,7 +371,33 @@ async function runE2ETest() {
     throw new Error('折叠历史卡片按需展开定位失败（卡死在 is-loading 或未完成加载）');
   }
 
-  // 验证点击外部或完成定位后菜单自动关闭收起
+  // 5. 验证会话撤回/重试（Undo/Rewind）日志分支截断与去重机制（AP-13 缺陷锁死回归）
+  const syntheticRewindLog = [
+    JSON.stringify({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>First prompt</USER_REQUEST>' }),
+    JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Model answer 1' }),
+    JSON.stringify({ step_index: 2, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Second prompt original</USER_REQUEST>' }),
+    JSON.stringify({ step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Model answer 2' }),
+    // 模拟用户在客户端点击“撤回”，将第二轮问题重新修改并发送（step_index 回退到 2）
+    JSON.stringify({ step_index: 2, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Second prompt edited</USER_REQUEST>' }),
+    JSON.stringify({ step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Model answer 2 revised' }),
+    // 模拟上下文压缩系统事件（不得误判为回滚）
+    JSON.stringify({ step_index: 1, source: 'SYSTEM', type: 'CHECKPOINT', content: 'Summary' }),
+    // 模拟第三轮提问
+    JSON.stringify({ step_index: 4, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>Third prompt</USER_REQUEST>' })
+  ].join('\n');
+
+  const parsedSynthetic = parseTranscriptContent(syntheticRewindLog);
+  const rollbackGuardVerified = (
+    parsedSynthetic.length === 3 &&
+    parsedSynthetic[0].index === 1 && parsedSynthetic[0].stepIndex === 0 &&
+    parsedSynthetic[1].index === 2 && parsedSynthetic[1].stepIndex === 2 && parsedSynthetic[1].cleanText === 'Second prompt edited' &&
+    parsedSynthetic[2].index === 3 && parsedSynthetic[2].stepIndex === 4 && parsedSynthetic[2].cleanText === 'Third prompt'
+  );
+
+  console.log('会话撤回/重试分支截断回归校验:', { rollbackGuardVerified });
+  if (!rollbackGuardVerified) {
+    throw new Error('会话撤回日志分支截断与去重校验失败：检测到死轮次残留或序号错位');
+  }
   await sendCdp('Runtime.evaluate', {
     expression: `(async () => {
       document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));

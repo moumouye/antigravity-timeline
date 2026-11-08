@@ -384,8 +384,34 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
       }));
 
       // Bind currently mounted DOM user cards
-      // Pass 1: Precise content matching (cleaning quote pills and attachments)
+      // Pass 1: Multi-tiered content matching (Exact match priority -> Strong prefix -> Substring fallback)
+      // Tier 1.1: Exact match priority (prevents prefix collisions between revisions)
       userCards.forEach(card => {
+        if (nodes.some(n => n.element === card)) return;
+        const { raw: cardRawText, clean: cardCleanText } = extractCardText(card);
+        const cardNormClean = normalizeTextForMatch(cardCleanText);
+        const cardNormRaw = normalizeTextForMatch(cardRawText);
+        if (!cardNormClean && !cardNormRaw) return;
+
+        const exactNode = nodes.find(n => {
+          if (n.element) return false;
+          const normClean = normalizeTextForMatch(n.cleanText || n.fullText || n.userText);
+          const normFull = normalizeTextForMatch(n.fullText);
+          return (cardNormClean && normClean && cardNormClean === normClean) ||
+                 (cardNormRaw && normFull && cardNormRaw === normFull);
+        });
+
+        if (exactNode) {
+          exactNode.element = /** @type {HTMLElement} */ (card);
+          exactNode.isFolded = false;
+          const elTop = /** @type {HTMLElement} */ (card).offsetTop || 0;
+          exactNode.topPercent = Math.min(98, Math.max(2, (elTop / scrollHeight) * 100));
+        }
+      });
+
+      // Tier 1.2: Prefix & substring matching fallback
+      userCards.forEach(card => {
+        if (nodes.some(n => n.element === card)) return;
         const { raw: cardRawText, clean: cardCleanText } = extractCardText(card);
         const cardNormClean = normalizeTextForMatch(cardCleanText);
         const cardNormRaw = normalizeTextForMatch(cardRawText);
@@ -400,6 +426,9 @@ export function initClient(clientStyles, defaultPrefs, getTexts) {
 
           // 1. Clean DOM text starts with or includes transcript prompt
           if (cardNormClean && normClean) {
+            if (cardNormClean.startsWith(normClean) || normClean.startsWith(cardNormClean)) {
+              return true;
+            }
             const prefixClean = normClean.slice(0, 20);
             const prefixCard = cardNormClean.slice(0, 20);
             if (cardNormClean.startsWith(prefixClean) || normClean.startsWith(prefixCard) || cardNormClean.includes(prefixClean)) {

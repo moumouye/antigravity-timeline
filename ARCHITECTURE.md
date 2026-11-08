@@ -13,7 +13,7 @@
 | 变动诉求 / 业务意图 | 责任物理目录 / 表面 | 唯一受信任业务契约 (Spec) | 严禁触碰的物理红线 (Invariants) |
 | :--- | :--- | :--- | :--- |
 | **视口跳转算法、平滑对齐或到达守护** | `sidecars/engine/client/panel.js` | [`docs/specs/VIEWPORT_ANCHORING_SPEC.md`](docs/specs/VIEWPORT_ANCHORING_SPEC.md) | 悬停主视口位移严格恒等于 0px；严禁调用模拟点击展开历史消息 |
-| **会话日志监听、推送管道与 CDP 信道** | `sidecars/engine/main.mjs` | [`docs/contracts.md`](docs/contracts.md) | 单向数据流管道；严禁跨越沙箱直接操作前端 DOM 树 |
+| **会话日志监听、推送管道与 CDP 信道** | `sidecars/engine/main.mjs`<br>`sidecars/engine/transcript.mjs` | [`docs/contracts.md`](docs/contracts.md) | 单向数据流管道；严禁跨越沙箱直接操作前端 DOM 树 |
 | **插件安装部署、符号链接与生命周期** | `manage.py` | [`docs/boundaries.md`](docs/boundaries.md) | 严禁篡改宿主底层应用包与 `app.asar` 归档 |
 | **质量工程、自动化断言与时序稳态测试** | `sidecars/engine/test_e2e.mjs` | [`docs/verification.md`](docs/verification.md) | 严禁脱离 Electron 真实调试树的伪 Mock 测试 |
 
