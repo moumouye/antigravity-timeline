@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Cross-Platform Bootstrap (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JS syntax
+        run: node --check sidecars/engine/main.mjs && node --check sidecars/engine/transcript.mjs && node --check sidecars/engine/test_e2e.mjs
+      - name: Run Python CDP bootstrap tests
+        run: python manage.py test --unit-only
+
+  release:
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches plugin.json
+        run: |
+          python3 -c "import json, os; v = json.load(open('plugin.json'))['version']; tag = os.environ['GITHUB_REF_NAME']; assert tag == f'v{v}', f'{tag} != v{v}'"
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="Antigravity Timeline Navigator ${TAG}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --notes-file GITHUB_RELEASE.md
+          else
+            gh release create "$TAG" --title "$TITLE" --notes-file GITHUB_RELEASE.md
+          fi

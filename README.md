@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="plugin.json"><img src="https://img.shields.io/badge/version-1.7.4-emerald.svg" alt="Version"></a>
+  <a href="plugin.json"><img src="https://img.shields.io/badge/version-1.8.0-emerald.svg" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/dependencies-zero-brightgreen.svg" alt="Zero Dependencies">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="Platform">
