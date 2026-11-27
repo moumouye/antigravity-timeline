@@ -8,24 +8,29 @@ import { loadTranscriptTurns, parseTranscriptContent } from './transcript.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-function getProfileDir() {
+function getProfileCandidates() {
   const platform = process.platform;
   const home = homedir();
   if (platform === 'darwin') {
-    return join(home, 'Library', 'Application Support', 'Antigravity');
+    return [join(home, 'Library', 'Application Support', 'Antigravity')];
   } else if (platform === 'win32') {
-    return join(process.env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Antigravity');
+    const roaming = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+    const local = process.env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    return [...new Set([join(roaming, 'Antigravity'), join(local, 'Antigravity')])];
   } else {
-    return join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'Antigravity');
+    return [join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'Antigravity')];
   }
 }
 
 async function getDevToolsPort() {
-  const portFile = join(getProfileDir(), 'DevToolsActivePort');
-  if (!existsSync(portFile)) return null;
-  const content = await readFile(portFile, 'utf8');
-  const port = parseInt(content.trim().split(/\r?\n/)[0], 10);
-  return Number.isInteger(port) && port > 0 ? port : null;
+  for (const dir of getProfileCandidates()) {
+    const portFile = join(dir, 'DevToolsActivePort');
+    if (!existsSync(portFile)) continue;
+    const content = await readFile(portFile, 'utf8');
+    const port = parseInt(content.trim().split(/\r?\n/)[0], 10);
+    if (Number.isInteger(port) && port > 0) return port;
+  }
+  return null;
 }
 
 async function runE2ETest() {

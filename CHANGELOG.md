@@ -1,6 +1,14 @@
 # 变更日志 (CHANGELOG)
 
-本项目遵循 [语义化版本规范 (SemVer)](https://semver.org/lang/zh-CN/)，严格秉承**用户显性感知优先原则**，仅记录面向终端用户的功能变动、缺陷修复与交互体验改进。
+本插件遵循 [语义化版本规范 (SemVer)](https://semver.org/lang/zh-CN/)，严格秉承**用户显性感知优先原则**，仅记录面向终端用户的功能变动、缺陷修复与交互体验改进。
+
+---
+
+## [Unreleased]
+
+- ✨ `feat`: 新增跨平台共享无侵入 CDP 引导机制（`compat/cdp_bootstrap.py`）与 `manage.py setup-cdp` 命令：适配新版 Antigravity 默认关闭 CDP 的策略，在不修改原应用 `app.asar` 与签名的前提下，于 macOS 自动配置登录自启与 `Antigravity Launcher.app`，于 Windows 自动为快捷方式注入 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1` 并支持多插件引用计数卸载还原
+- 🐛 `fix`: 修复 Windows 环境下仅检索 `%LOCALAPPDATA%\Antigravity` 导致遗漏 `%APPDATA%\Antigravity\DevToolsActivePort` 的端口发现兼容缺陷
+- 🐛 `fix`: 修复 `manage.py install` 在目标目录内执行时误删除自身源码目录的边界缺陷
 
 ---
 

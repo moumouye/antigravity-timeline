@@ -4,6 +4,7 @@ Antigravity Timeline Navigator - One-line Bootstrap Installer.
 Cross-platform support: macOS, Linux, and Windows.
 Zero external dependencies (Python 3 standard library only).
 """
+import importlib.util
 import io
 import json
 import os
@@ -97,6 +98,14 @@ def main():
         temp_file.replace(CONFIG_FILE)
     except Exception as e:
         print(f"\033[1;33m[WARN]\033[0m 写入 config.json 失败: {e}")
+
+    cdp_script = PLUGIN_TARGET / "compat" / "cdp_bootstrap.py"
+    if cdp_script.is_file():
+        print_step("4/4", "正在配置跨平台共享无侵入 CDP 启动入口...")
+        spec = importlib.util.spec_from_file_location("timeline_cdp_bootstrap", cdp_script)
+        cdp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cdp)
+        cdp.ensure_cdp_bootstrap("antigravity-timeline", home=HOME)
 
     print("\n\033[1;32m🎉 安装成功！\033[0m")
     print("--------------------------------------------------")

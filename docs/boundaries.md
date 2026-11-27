@@ -27,7 +27,7 @@
 
 | 模块层级 | 物理位置 | 技术栈 | 职责与架构规范 |
 | :--- | :--- | :--- | :--- |
-| **宿主层 (Host)** | Antigravity 桌面端 | Electron / React | 宿主原生黑盒，严禁修改任何客户端二进制或 `app.asar` 归档。 |
+| **宿主层 (Host)** | Antigravity 桌面端 | Electron / React | 宿主原生黑盒，严禁修改任何客户端二进制、重签名或篡改 `app.asar` 归档；通过共享外部 CDP 引导模块（[`compat/cdp_bootstrap.py`](../compat/cdp_bootstrap.py)）以引用计数方式无侵入开启调试端口。 |
 | **引擎层 (Sidecar)** | `sidecars/engine/main.mjs` | Node.js 原生 ES Module | 负责探测 CDP 调试端口、监控文件变动、解析底层会话日志并执行 CDP 管道注入。基于原生标准库实现零外部依赖设计（Zero-dependency），保障秒级冷启动与轻量常驻；严禁直接操作前端 DOM 树。 |
 | **注入层 (Client)** | `sidecars/engine/client/` | 原生 JS / CSS | 运行在渲染窗口内部，负责手柄与菜单 UI 渲染、视口监听与平滑跳转。严禁发起跨域本地文件请求，严禁直接读写操作系统文件系统。 |
 | **测试门禁 (Testing)** | `sidecars/engine/test_e2e.mjs` | Node.js / CDP | 负责模拟用户交互并对核心指标进行硬性机器断言，直连 Electron 真实运行时。 |

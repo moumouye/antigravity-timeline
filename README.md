@@ -43,7 +43,9 @@
   irm https://raw.githubusercontent.com/moumouye/antigravity-timeline/main/install.py | python
   ```
 
-安装完成后，**重启 Antigravity 桌面客户端**即可生效。
+安装完成后，**完全退出并重新打开 Antigravity 桌面客户端**即可生效（已自动配置共享无侵入 CDP 启动入口，**绝不修改原版 `Antigravity.app` 或 `app.asar`**）：
+* **macOS**：已自动创建登录自启项（`com.moumouye.antigravity-cdp`）与 `/Applications/Antigravity Launcher.app`。彻底退出客户端后，请通过 **「Antigravity Launcher」** 启动（建议替换 Dock 中的原版图标）。
+* **Windows**：已自动为桌面 / 开始菜单 / 任务栏快捷方式注入 `--remote-debugging-port=0 --remote-debugging-address=127.0.0.1` 参数。若任务栏旧固定图标未生效，请取消固定后从桌面重新固定；客户端大版本更新后可运行 `python manage.py setup-cdp` 一键恢复。
 
 ---
 
@@ -91,8 +93,9 @@ python3 manage.py
 
 | 操作 | 命令 (标准 Python) | 说明 |
 | :--- | :--- | :--- |
-| **查看状态** | `python3 manage.py status` | 查看插件安装软链与后台进程状态 |
-| **一键安装** | `python3 manage.py install` | 建立软链并在宿主配置中注册启用 |
+| **查看状态** | `python3 manage.py status` | 查看插件安装软链、共享 CDP 引导与后台进程状态 |
+| **一键安装** | `python3 manage.py install` | 建立软链、注册启用并配置共享 CDP 启动入口 |
+| **配置/修复 CDP** | `python3 manage.py setup-cdp` | 单独配置或修复外部无侵入 CDP 启动入口（macOS Launcher / Win 快捷方式） |
 | **临时禁用** | `python3 manage.py disable` | 暂时停用插件并释放后台引擎 |
 | **重新启用** | `python3 manage.py enable` | 重新激活插件 |
 | **彻底卸载** | `python3 manage.py uninstall` | 纯净卸载：清除软链、配置条目及运行时数据（零残留） |

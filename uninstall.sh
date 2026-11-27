@@ -3,6 +3,12 @@ set -e
 
 echo -e "\033[1;36m==>\033[0m 正在卸载 Antigravity Timeline 插件..."
 
+TARGET_DIR="$HOME/.gemini/config/plugins/antigravity-timeline"
+if [ -f "$TARGET_DIR/manage.py" ] && command -v python3 &>/dev/null; then
+    python3 "$TARGET_DIR/manage.py" uninstall --deep
+    exit 0
+fi
+
 # 1. 停止运行中的 Sidecar 引擎进程
 pkill -f "sidecars/engine/main.mjs" 2>/dev/null || true
 pkill -f "antigravity-timeline" 2>/dev/null || true

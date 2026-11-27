@@ -1,5 +1,20 @@
-# Antigravity Timeline Navigator - One-line Uninstaller for Windows
+﻿# Antigravity Timeline Navigator - One-line Uninstaller for Windows
 Write-Host "==> 正在卸载 Antigravity Timeline 插件..." -ForegroundColor Cyan
+
+$TargetDir = Join-Path $HOME ".gemini\config\plugins\antigravity-timeline"
+$ManagePy = Join-Path $TargetDir "manage.py"
+if (Test-Path $ManagePy) {
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        python $ManagePy uninstall --deep
+        exit $LASTEXITCODE
+    } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+        python3 $ManagePy uninstall --deep
+        exit $LASTEXITCODE
+    } elseif (Get-Command py -ErrorAction SilentlyContinue) {
+        py -3 $ManagePy uninstall --deep
+        exit $LASTEXITCODE
+    }
+}
 
 # 1. 终止残留 node 进程 (若有)
 Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*sidecars/engine/main.mjs*" } | Stop-Process -Force -ErrorAction SilentlyContinue

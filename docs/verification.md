@@ -31,6 +31,11 @@ manage.py test
 # 本地环境可使用 python3 manage.py test 或 uv run manage.py test
 ```
 
+*仅运行离线跨平台单元测试（含共享 CDP 引导逻辑与 GitHub Actions CI，不依赖运行中的 Antigravity 窗口）*：
+```bash
+python3 manage.py test --unit-only
+```
+
 * **判定标准**：进程退出码必须为 `0`（全绿通过）；
 * **门禁阻断**：若出现退出码 `1` 或抛出未捕获异常，**硬性阻断代码提交与版本发布**，须在本地定位并完成根因修复。
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Antigravity Timeline Navigation - Plugin Lifecycle Manager."""
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -19,6 +20,13 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 SIDECAR_DATA_DIR = HOME / ".gemini" / "antigravity" / "sidecar_data" / "antigravity-timeline"
 PLUGIN_DATA_DIR = HOME / ".gemini" / "antigravity" / "plugin_data" / "antigravity-timeline"
 PREFS_FILE = SIDECAR_DATA_DIR / "engine" / "data" / "preferences.json"
+
+
+def cdp_module():
+    spec = importlib.util.spec_from_file_location('timeline_cdp_bootstrap', SOURCE_DIR / 'compat' / 'cdp_bootstrap.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_json(path: Path, default=None):
@@ -93,23 +101,26 @@ def install_plugin():
     print("\n--- [1/2] 安装插件软链接 ---")
     PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if PLUGIN_TARGET.exists() or PLUGIN_TARGET.is_symlink():
-        try:
-            if PLUGIN_TARGET.is_symlink():
-                PLUGIN_TARGET.unlink()
-            else:
-                shutil.rmtree(PLUGIN_TARGET)
-            print(f"[OK] 已清理旧安装路径: {PLUGIN_TARGET}")
-        except Exception as e:
-            print(f"[ERROR] 清理旧安装失败: {e}")
-            return
+    if SOURCE_DIR.resolve() == PLUGIN_TARGET.resolve():
+        print(f"[INFO] 当前已位于目标插件目录 ({PLUGIN_TARGET})，跳过软链接创建。")
+    else:
+        if PLUGIN_TARGET.exists() or PLUGIN_TARGET.is_symlink():
+            try:
+                if PLUGIN_TARGET.is_symlink():
+                    PLUGIN_TARGET.unlink()
+                else:
+                    shutil.rmtree(PLUGIN_TARGET)
+                print(f"[OK] 已清理旧安装路径: {PLUGIN_TARGET}")
+            except Exception as e:
+                print(f"[ERROR] 清理旧安装失败: {e}")
+                return
 
-    try:
-        PLUGIN_TARGET.symlink_to(SOURCE_DIR, target_is_directory=True)
-        print(f"[OK] 已创建软链接: {PLUGIN_TARGET} -> {SOURCE_DIR}")
-    except OSError:
-        shutil.copytree(SOURCE_DIR, PLUGIN_TARGET, symlinks=True)
-        print(f"[OK] 已拷贝插件到: {PLUGIN_TARGET}")
+        try:
+            PLUGIN_TARGET.symlink_to(SOURCE_DIR, target_is_directory=True)
+            print(f"[OK] 已创建软链接: {PLUGIN_TARGET} -> {SOURCE_DIR}")
+        except OSError:
+            shutil.copytree(SOURCE_DIR, PLUGIN_TARGET, symlinks=True)
+            print(f"[OK] 已拷贝插件到: {PLUGIN_TARGET}")
 
     print("\n--- [2/2] 注册并启用插件 ---")
     config = load_json(CONFIG_FILE, {})
@@ -117,6 +128,7 @@ def install_plugin():
     plugins["antigravity-timeline"] = {"enabled": True}
     save_json(CONFIG_FILE, config)
     print(f"[OK] 已在 {CONFIG_FILE} 中启用插件。")
+    cdp_module().ensure_cdp_bootstrap("antigravity-timeline", home=HOME)
 
     print("\n[完成] 时间线插件已安装并启用！")
     print("提示: 若 Antigravity 正在运行，请重启客户端或后台引擎即刻加载时间线插件。")
@@ -191,6 +203,8 @@ def uninstall_plugin(deep: bool = True):
         shutil.rmtree(local_sidecar_logs)
         print(f"[OK] 已清理本地临时日志目录: {local_sidecar_logs}")
 
+    cdp_module().remove_cdp_bootstrap("antigravity-timeline", home=HOME)
+
     print("\n[完成] 彻底纯净卸载完毕！所有相关文件及对应空文件夹已全部删除，系统内零残留。")
 
 
@@ -237,6 +251,15 @@ def check_status():
     else:
         print("后台引擎: 未运行")
 
+    cdp_info = cdp_module().inspect_cdp_status(home=HOME)
+    print(f"共享 CDP 引导: {'已配置' if cdp_info.get('bootstrapInstalled') else '未配置'}")
+    if cdp_info.get('cdpReady'):
+        print(f"宿主调试端口: 运行中 ({cdp_info['port']})")
+    elif cdp_info.get('port'):
+        print(f"宿主调试端口: 端口文件存在但未就绪 ({cdp_info['port']})")
+    else:
+        print("宿主调试端口: 未开启")
+
     print("\n[偏好配置快照]")
     if prefs:
         print(f"  - 禁止发送后自动滚底: {'是 (已锁定)' if prefs.get('disableAutoScrollOnSend', True) else '否'}")
@@ -248,20 +271,30 @@ def check_status():
     print("=====================================\n")
 
 
-def run_e2e_tests():
-    """Run E2E automated test pipeline."""
+def run_e2e_tests(unit_only: bool = False):
+    """Run unit tests and optional live E2E automated test pipeline."""
+    tests_dir = SOURCE_DIR / "tests"
+    if tests_dir.is_dir():
+        print("\n>>> 正在运行跨平台单元测试...")
+        unit_res = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", str(tests_dir), "-v"], cwd=SOURCE_DIR)
+        if unit_res.returncode != 0:
+            return False
+    if unit_only:
+        return True
+
     test_script = SOURCE_DIR / "sidecars" / "engine" / "test_e2e.mjs"
     if not test_script.exists():
         print(f"[ERROR] 测试脚本未找到: {test_script}")
-        return
+        return False
 
     print("\n>>> 开始执行 Antigravity Timeline 端到端自动化测试...")
     cmd = ["node", str(test_script)]
     res = subprocess.run(cmd)
     if res.returncode == 0:
         print("\n[OK] 端到端自动化测试顺利完成！")
-    else:
-        print(f"\n[FAIL] 测试异常退出，退出码: {res.returncode}")
+        return True
+    print(f"\n[FAIL] 测试异常退出，退出码: {res.returncode}")
+    return False
 
 
 def interactive_menu():
@@ -310,9 +343,10 @@ def interactive_menu():
 
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Timeline Plugin Lifecycle Manager")
-    parser.add_argument("action", nargs="?", choices=["install", "uninstall", "enable", "disable", "status", "test"],
+    parser.add_argument("action", nargs="?", choices=["install", "uninstall", "enable", "disable", "status", "setup-cdp", "test"],
                         help="Action to perform")
     parser.add_argument("--deep", action="store_true", default=True, help="Deep clean uninstall (default: True)")
+    parser.add_argument("--unit-only", action="store_true", help="Run only offline unit tests")
     args = parser.parse_args()
 
     if not args.action:
@@ -327,8 +361,11 @@ def main():
         set_enabled(False)
     elif args.action == "status":
         check_status()
+    elif args.action == "setup-cdp":
+        cdp_module().ensure_cdp_bootstrap("antigravity-timeline", home=HOME)
     elif args.action == "test":
-        run_e2e_tests()
+        ok = run_e2e_tests(unit_only=args.unit_only)
+        raise SystemExit(0 if ok else 1)
 
 
 if __name__ == "__main__":
