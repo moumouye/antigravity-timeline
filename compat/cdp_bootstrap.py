@@ -291,6 +291,16 @@ if (Test-Path $stateFile) {
 """
 
 
+def _safe_print(text, stream=None):
+    target = sys.stdout if stream is None else stream
+    try:
+        print(text, file=target)
+    except UnicodeEncodeError:
+        encoding = getattr(target, 'encoding', None) or 'ascii'
+        fallback = text.encode(encoding, errors='replace').decode(encoding, errors='replace')
+        print(fallback, file=target)
+
+
 def _read_json(path, default):
     if not path.is_file():
         return default
@@ -603,7 +613,7 @@ def ensure_cdp_bootstrap(plugin_id, *, home=None, platform=None, env=None, quiet
     if existing_ver > SCHEMA_VERSION:
         status = inspect_cdp_status(home=home, platform=platform, env=env)
         if not quiet:
-            print(f'[CDP] 检测到更新版本的共享 CDP 启动配置 (schema v{existing_ver})，已直接复用。')
+            _safe_print(f'[CDP] 检测到更新版本的共享 CDP 启动配置 (schema v{existing_ver})，已直接复用。')
         return {'action': 'reused_newer', 'consumers': consumers, **status}
 
     details = {}
@@ -616,7 +626,7 @@ def ensure_cdp_bootstrap(plugin_id, *, home=None, platform=None, env=None, quiet
             details = _setup_linux(home, paths, live)
     except Exception as exc:
         if not quiet:
-            print(f'[WARN] 配置共享 CDP 启动入口时出现异常（不影响插件注册）: {exc}', file=sys.stderr)
+            _safe_print(f'[WARN] 配置共享 CDP 启动入口时出现异常（不影响插件注册）: {exc}', sys.stderr)
         return {'action': 'warning', 'error': str(exc), 'consumers': consumers}
 
     _write_json(paths['version'], {
@@ -629,15 +639,15 @@ def ensure_cdp_bootstrap(plugin_id, *, home=None, platform=None, env=None, quiet
     if not quiet:
         if platform == 'darwin':
             launcher = details.get('launcherPath') or f'/Applications/{MACOS_LAUNCHER_NAME}'
-            print(f'[CDP] 已配置共享登录自启 ({MACOS_AGENT_LABEL}) 与启动器: {launcher}')
+            _safe_print(f'[CDP] 已配置共享登录自启 ({MACOS_AGENT_LABEL}) 与启动器: {launcher}')
             if live and not status['cdpReady']:
-                print('[CDP] 提示: 请完全退出当前 Antigravity 后，通过「Antigravity Launcher」重新打开以开启调试端口（建议替换 Dock 原图标）。')
+                _safe_print('[CDP] 提示: 请完全退出当前 Antigravity 后，通过「Antigravity Launcher」重新打开以开启调试端口（建议替换 Dock 原图标）。')
         elif platform == 'win32':
-            print('[CDP] 已为 Antigravity 快捷方式注入本地调试端口参数，并启用登录自检守护。')
+            _safe_print('[CDP] 已为 Antigravity 快捷方式注入本地调试端口参数，并启用登录自检守护。')
             if live and not status['cdpReady']:
-                print('[CDP] 提示: 请完全退出并重新打开 Antigravity（若使用任务栏旧固定图标未生效，请取消固定后从桌面/开始菜单重新固定）。')
+                _safe_print('[CDP] 提示: 请完全退出并重新打开 Antigravity（若使用任务栏旧固定图标未生效，请取消固定后从桌面/开始菜单重新固定）。')
         elif platform.startswith('linux') and details.get('desktopFile'):
-            print(f"[CDP] 已更新桌面启动入口: {details['desktopFile']}")
+            _safe_print(f"[CDP] 已更新桌面启动入口: {details['desktopFile']}")
 
     return {'action': 'configured', 'consumers': consumers, **details, **status}
 
@@ -655,7 +665,7 @@ def remove_cdp_bootstrap(plugin_id, *, home=None, platform=None, force=False, qu
     remaining = _unregister_consumer(home, paths, plugin_id)
     if remaining and not force:
         if not quiet:
-            print(f'[CDP] 保留共享 CDP 启动配置（仍有其他插件依赖: {", ".join(remaining)}）。')
+            _safe_print(f'[CDP] 保留共享 CDP 启动配置（仍有其他插件依赖: {", ".join(remaining)}）。')
         return {'removed': False, 'remaining': remaining}
 
     version_info = _read_json(paths['version'], {})
@@ -695,10 +705,10 @@ def remove_cdp_bootstrap(plugin_id, *, home=None, platform=None, force=False, qu
                     target.unlink()
     except Exception as exc:
         if not quiet:
-            print(f'[WARN] 清理共享 CDP 启动配置时出现异常: {exc}', file=sys.stderr)
+            _safe_print(f'[WARN] 清理共享 CDP 启动配置时出现异常: {exc}', sys.stderr)
 
     if paths['root'].exists():
         shutil.rmtree(paths['root'], ignore_errors=True)
     if not quiet:
-        print('[CDP] 已清理共享 CDP 启动配置与启动器。')
+        _safe_print('[CDP] 已清理共享 CDP 启动配置与启动器。')
     return {'removed': True, 'remaining': []}

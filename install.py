@@ -14,6 +14,13 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
 GITHUB_REPO = "moumouye/antigravity-timeline"
 ARCHIVE_URL = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
 

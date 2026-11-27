@@ -11,6 +11,13 @@ import sys
 import time
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, 'reconfigure'):
+        try:
+            _stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
 SOURCE_DIR = Path(__file__).resolve().parent
 HOME = Path.home()
 CONFIG_DIR = HOME / ".gemini" / "config"
